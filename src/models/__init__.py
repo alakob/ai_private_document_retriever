@@ -1,3 +1,0 @@
-"""
-Database models and schemas.
-""" 

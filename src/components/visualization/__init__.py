@@ -1,3 +1,0 @@
-"""
-Vector store visualization components.
-""" 
