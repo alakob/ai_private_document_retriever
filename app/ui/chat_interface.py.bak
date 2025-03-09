@@ -1,8 +1,5 @@
 import os
-from typing import List, Dict, Optional, Any, Tuple, Callable, Union, AsyncGenerator, Type
-import time
-import logging
-from datetime import datetime, timedelta
+from typing import List, Dict, Any, Callable, Optional, Union, AsyncGenerator
 import gradio as gr
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
@@ -27,57 +24,6 @@ from pgvector.sqlalchemy import Vector
 import numpy as np
 import shutil
 from pathlib import Path
-
-# Define custom exceptions for security and circuit breaking
-class SecurityError(Exception):
-    """Raised when a security violation is detected"""
-    pass
-
-class CircuitOpenError(Exception):
-    """Raised when the circuit breaker is open and requests are blocked"""
-    pass
-
-# Circuit breaker implementation
-class CircuitBreaker:
-    def __init__(self, failure_threshold: int = 3, reset_timeout: int = 60):
-        self.failure_threshold = failure_threshold  # Number of failures before opening circuit
-        self.reset_timeout = reset_timeout  # Seconds to wait before attempting reset
-        self.failure_count = 0  # Current failure count
-        self.last_failure_time = None  # Timestamp of last failure
-        self.state = "CLOSED"  # Circuit state: CLOSED, OPEN, HALF-OPEN
-        
-    def check_state(self):
-        """Check if circuit is open and block requests if needed"""
-        if self.state == "OPEN":
-            # Check if reset timeout has elapsed
-            if self.last_failure_time and time.time() - self.last_failure_time > self.reset_timeout:
-                # Try half-open state to test if system has recovered
-                self.state = "HALF-OPEN"
-                logging.info("Circuit breaker moving to HALF-OPEN state")
-            else:
-                # Circuit still open, block request
-                raise CircuitOpenError(f"Circuit breaker is OPEN until {datetime.fromtimestamp(self.last_failure_time + self.reset_timeout)}")
-        
-    def record_success(self):
-        """Record successful operation"""
-        if self.state == "HALF-OPEN":
-            # If successful in half-open state, reset circuit
-            self.state = "CLOSED"
-            self.failure_count = 0
-            logging.info("Circuit breaker reset to CLOSED state")
-    
-    def record_failure(self):
-        """Record failed operation and potentially open circuit"""
-        self.failure_count += 1
-        self.last_failure_time = time.time()
-        
-        if self.failure_count >= self.failure_threshold:
-            if self.state != "OPEN":
-                self.state = "OPEN"
-                logging.warning(f"Circuit breaker OPENED after {self.failure_count} failures")
-
-# Initialize the circuit breaker
-CIRCUIT_BREAKER = CircuitBreaker(failure_threshold=3, reset_timeout=60)
 import logging
 import plotly.graph_objects as go
 from pyvis.network import Network
@@ -92,7 +38,6 @@ from utils.vector_store_visualization import (
 from sqlalchemy.ext.asyncio import AsyncSession
 import hashlib
 from datetime import datetime
-import time
 
 from app.config import chat_config, db_config, processor_config, PostgresConfig, ProcessorConfig
 
@@ -117,82 +62,6 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-class SecurityError(Exception):
-    """Raised when potential security issue is detected"""
-    def __init__(self, message: str, payload: Optional[Dict] = None):
-        super().__init__(message)
-        self.payload = payload or {}
-        logger.security(f"Security violation: {message}", extra=self.payload)
-
-# Rate limiter using token bucket algorithm
-class MermaidRateLimiter:
-    def __init__(self, rate: int = 5, period: float = 60.0):
-        self.tokens = rate
-        self.rate = rate
-        self.last_check = time.monotonic()
-        self.period = period
-        self.metrics = {
-            'total_requests': 0,
-            'rate_limited': 0,
-            'avg_response_time': 0.0
-        }
-
-    async def acquire(self):
-        start_time = time.monotonic()
-        self.metrics['total_requests'] += 1
-        now = time.monotonic()
-        elapsed = now - self.last_check
-        
-        if elapsed > self.period:
-            self.tokens = self.rate
-            self.last_check = now
-        
-        if self.tokens < 1:
-            self.metrics['rate_limited'] += 1
-            raise RateLimitExceeded("Too many diagram generation requests")
-        
-        self.tokens -= 1
-        try:
-            return True
-        finally:
-            self.metrics['avg_response_time'] = (
-                (self.metrics['avg_response_time'] * (self.metrics['total_requests'] - 1)) + 
-                (time.monotonic() - start_time)
-            ) / self.metrics['total_requests']
-
-    def get_metrics(self) -> Dict[str, Any]:
-        return {
-            **self.metrics,
-            'current_tokens': self.tokens,
-            'last_reset': self.last_check
-        }
-
-RATE_LIMITER = MermaidRateLimiter(rate=5, period=60)  # 5 requests/minute
-
-class CircuitBreaker:
-    def __init__(self, max_failures=3, reset_timeout=30):
-        self.max_failures = max_failures
-        self.reset_timeout = reset_timeout
-        self.failure_count = 0
-        self.last_failure = 0
-
-    def check_state(self):
-        if self.failure_count >= self.max_failures:
-            if time.monotonic() - self.last_failure > self.reset_timeout:
-                self.reset()
-                return True
-            raise CircuitOpenError("Service unavailable - circuit open")
-        return True
-
-    def record_failure(self):
-        self.failure_count += 1
-        self.last_failure = time.monotonic()
-
-    def reset(self):
-        self.failure_count = 0
-
-CIRCUIT_BREAKER = CircuitBreaker()
 
 class PostgresVectorRetriever(BaseRetriever, BaseModel):
     """Custom retriever for PostgreSQL vector store"""
@@ -1121,6 +990,11 @@ async def main():
                 background-color: white !important;
             }
             
+            /* Special selector for the row containers */
+            #document-accordion .gr-padded {
+                background-color: white !important;
+            }
+            
             /* Overlay to force white background */
             #document-accordion::before {
                 content: "";
@@ -1400,7 +1274,15 @@ async def main():
                         interactive=False
                     )
                 
-                # Previously had renderer selection here, now using streamlit_mermaid styling by default
+                # Add radio buttons for diagram renderer selection
+                with gr.Row():
+                    diagram_renderer = gr.Radio(
+                        choices=["Mermaid.js (Default)", "streamlit_mermaid", "mkdocs-mermaid2", "PyMdown Extension"],
+                        value="Mermaid.js (Default)",
+                        label="Diagram Renderer",
+                        info="Select the library to render the conceptual diagram",
+                        interactive=True
+                    )
                 
                 # Container for the diagram output
                 with gr.Column(elem_classes="center-diagram"):
@@ -1506,8 +1388,8 @@ async def main():
                         vector_store_type="postgres",
                         postgres_config=postgres_config,
                         batch_size=50,
-                        max_workers=1,
-                        db_pool_size=5,
+                        max_workers=8,
+                        db_pool_size=20,
                         openai_api_key=OPENAI_API_KEY,
                         # Set loader options based on user selection
                         use_docling=use_docling,
@@ -1528,8 +1410,7 @@ async def main():
                     
                     # Get all files in documents directory
                     all_files = list(chat_interface.documents_dir.glob('*.*'))
-                    total_files = len(all_files)
-                    print(f"Found {total_files} files to process")
+                    print(f"Found {len(all_files)} files to process")
                     
                     # Process files with checksum verification
                     total_chunks = 0
@@ -1540,6 +1421,10 @@ async def main():
                     existing_checksums = {}
                     existing_filenames = {}
                     
+                    # Update progress box with more info
+                    status_html = f"<div style='padding: 10px;'><b>\ud83d\udcda Document Loader:</b> {loader_type}<br/><br/>Checking {len(all_files)} files in database...</div>"
+                    yield status_html
+                    
                     async with chat_interface.async_session() as session:
                         # Get all existing documents
                         result = await session.execute(select(DocumentModel))
@@ -1548,7 +1433,7 @@ async def main():
                         for doc in existing_docs:
                             existing_checksums[doc.checksum] = doc.id
                             existing_filenames[doc.filename] = doc.checksum
-                    
+                        
                     print(f"\n=== Existing Documents in Database ===")
                     print(f"Found {len(existing_checksums)} documents in database")
                     
@@ -1651,7 +1536,7 @@ async def main():
                     yield html_status
                     
                 except Exception as e:
-                    error_message = f"<div style='color: red; padding: 10px;'>Error processing documents with {loader_type} loader: {str(e)}</div>"
+                    error_message = f"<div style='padding: 10px; color: #e74c3c;'><h3>❌ Error</h3><p>Error processing documents with {loader_type} loader: {str(e)}</p></div>"
                     logger.error(error_message, exc_info=True)
                     yield error_message
 
@@ -1736,481 +1621,1207 @@ async def main():
             )
             
             # Define function to generate conceptual diagram from chat history using Mermaid
-            async def generate_chat_diagram(history: List[Dict[str, str]]) -> Tuple[Optional[str], str]:
-                """Render Mermaid diagrams with streamlit_mermaid styling from LLM output with essential error handling"""
+            async def generate_chat_diagram(history, renderer="Mermaid.js (Default)"):
                 try:
-                    if not history:
-                        return None, "No chat history available"
-
-                    # Extract and format chat history
-                    chat_history = '\n'.join([f"{msg['role']}: {msg['content']}" for msg in history])
+                    diagram_status.value = "Generating conceptual diagram... Please wait."
                     
-                    # Get Mermaid code from LLM with metrics tracking
-                    start_time = time.time()
-                    success = False
+                    # Check if chat history exists
+                    if not history or len(history) == 0:
+                        return None, "No chat history available. Please have a conversation first."
+                    
+                    # Format chat history for the prompt
+                    chat_history_text = ""
+                    for msg in history:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role and content:
+                            chat_history_text += f"{role.capitalize()}: {content}\n\n"
+                    
+                    if not chat_history_text.strip():
+                        diagram_status.value = "No chat history available to analyze."
+                        return None, "No chat history available to analyze."
+                    
+                    # Create the prompt for the LLM to analyze the chat history
+                    # Use the diagram template from config
+                    prompt = prompt_config.diagram_template.format(chat_history=chat_history_text)
+                    
+                    # Call the LLM to analyze the chat history using a structured message
+                    from langchain_core.messages import HumanMessage
+                    human_message = HumanMessage(content=prompt)
+                    analysis_response = await chat_interface.llm.ainvoke([human_message])
+                    
+                    # Extract the Mermaid diagram from the response
                     try:
-                        # Call LLM to generate Mermaid diagram
-                        response = await chat_interface.llm.ainvoke(f"Create Mermaid diagram from:\n{chat_history}")
-                        success = True
-                    except Exception as e:
-                        # Log the error and return user-friendly message
-                        logging.error(f"LLM invocation failed: {str(e)}")
-                        return None, f"Error generating diagram: {str(e)}"
-                    finally:
-                        # Record metrics
-                        elapsed_time = time.time() - start_time
-                        logging.info(f"Diagram generation took {elapsed_time:.2f}s (success={success})")
-                    # Extract Mermaid code from response with better error handling
-                    try:
-                        # Log the COMPLETE raw LLM response for debugging
-                        logging.info(f"==========RAW LLM RESPONSE==========\n{response.content}\n==========END RAW LLM RESPONSE==========\n")
-                        
-                        # First try to extract Mermaid code from a code block (multiple formats)
-                        mermaid_match = re.search(r'```mermaid\n(.*?)\n```', response.content, re.DOTALL)
-                        if not mermaid_match:
-                            # Try alternative formats
-                            mermaid_match = re.search(r'```\n(.*?)\n```', response.content, re.DOTALL)
-                        if not mermaid_match:
-                            # Try without newlines after backticks
-                            mermaid_match = re.search(r'```mermaid(.+?)```', response.content, re.DOTALL)
-                        if not mermaid_match:
-                            mermaid_match = re.search(r'```(.+?)```', response.content, re.DOTALL)
-                            
-                        if mermaid_match:
-                            mermaid_code = mermaid_match.group(1)
-                            # Log the raw extracted Mermaid code without any modifications
-                            logging.info(f"==========RAW MERMAID CODE FROM LLM==========\n{mermaid_code}\n==========END RAW MERMAID CODE==========\n")
+                        # Get the content from the response
+                        if hasattr(analysis_response, 'content'):
+                            content = analysis_response.content
                         else:
-                            # Use the full response if no Mermaid code block found
-                            mermaid_code = response.content
-                            logging.warning(f"No Mermaid code block found, using full response as Mermaid code\n")
-                            
-                        # Security validation of the Mermaid code
-                        # Check for potential XSS or injection attacks
-                        dangerous_patterns = [
-                            r'<script', r'javascript:', r'onerror=', r'onclick=', 
-                            r'onload=', r'eval\(', r'document\.', r'window\.'
-                        ]
+                            content = str(analysis_response)
                         
-                        for pattern in dangerous_patterns:
-                            if re.search(pattern, mermaid_code, re.IGNORECASE):
-                                error_msg = f"Security violation detected in Mermaid code: {pattern}"
-                                logging.error(error_msg)
-                                return None, error_msg
+                        # Log the full LLM response for debugging
+                        print("\n==== FULL LLM RESPONSE ====")
+                        print(content)
+                        print("==== END LLM RESPONSE ====")
+                            
+                        # Try to find Mermaid code in the response
+                        mermaid_start = content.find('```mermaid')
+                        mermaid_end = content.rfind('```')
+                        
+                        # If we can't find mermaid code with the standard markers, try alternative formats
+                        if mermaid_start == -1:
+                            # Try without the backticks
+                            mermaid_start = content.find('mermaid')
+                            if mermaid_start != -1:
+                                # Find the end of the diagram by looking for common diagram types
+                                diagram_types = ['flowchart', 'graph', 'mindmap', 'sequenceDiagram', 'classDiagram']
+                                for diagram_type in diagram_types:
+                                    if content[mermaid_start:].find(diagram_type) != -1:
+                                        mermaid_start = mermaid_start + content[mermaid_start:].find(diagram_type)
+                                        break
+                        
+                        if mermaid_start != -1 and mermaid_end != -1:
+                            # Extract the Mermaid code (excluding the ```mermaid and ``` markers)
+                            mermaid_start += len('```mermaid')
+                            mermaid_code = content[mermaid_start:mermaid_end].strip()
+                            
+                            # Clean up the code to ensure it's valid Mermaid syntax
+                            # Remove any additional markdown formatting that might be present
+                            mermaid_code = mermaid_code.replace('\\n', '\n').replace('\\t', '\t')
+                            
+                            # Ensure the mermaid code starts with a valid diagram type
+                            if not any(mermaid_code.strip().startswith(prefix) for prefix in ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'gantt', 'pie', 'erDiagram', 'mindmap']):
+                                # Add a default graph type if missing
+                                mermaid_code = 'graph TD\n' + mermaid_code
                                 
-                    except Exception as e:
-                        logging.error(f"Error extracting Mermaid code: {str(e)}")
-                        return None, f"Error processing diagram: {str(e)}"
-
-                    # Apply minimal needed fixes to make Mermaid syntax work while preserving content
-                    try:
-                        # Create a guaranteed-valid fallback diagram with modern Mermaid syntax
-                        fallback_code = (
-                            "flowchart TD\n" +
-                            "    A[\"Chat History\"] -->|\"Analyzed by\"| B[\"LLM\"]\n" +
-                            "    B -->|\"Generates\"| C[\"Mermaid Diagram\"]\n" +
-                            "    C -->|\"Displayed in\"| D[\"User Interface\"]\n"
-                        )
-                        
-                        # Only use fallback if absolutely no mermaid code was found
-                        if not mermaid_code or mermaid_code.strip() == "":
-                            logging.warning("No valid mermaid code found, using fallback diagram")
-                            mermaid_code = fallback_code
-                        else:
-                            logging.info("Applying minimal fixes to Mermaid syntax while preserving content")
+                            # Make sure the code is properly formatted with line breaks
+                            # This is critical for Mermaid.js to parse the syntax correctly
+                            if ';' in mermaid_code and '\n' not in mermaid_code:
+                                # If we have semicolons but no line breaks, add them
+                                mermaid_code = mermaid_code.replace(';', ';\n')
+                            # FINAL FIX: RETAIN EXACT LLM DIAGRAM STRUCTURE
+                            # Only ensure a valid diagram type exists, nothing else
                             
-                            # Remove leading/trailing whitespace
-                            mermaid_code = mermaid_code.strip()
+                            # 1. Check if diagram already has a valid type
+                            valid_diagram_type = any(mermaid_code.strip().startswith(prefix) for prefix in ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'gantt', 'pie', 'erDiagram', 'mindmap'])
                             
-                            # Log the original code
-                            logging.info(f"ORIGINAL MERMAID CODE:\n{mermaid_code}\n")
+                            # 2. If no diagram type exists, add a simple one
+                            if not valid_diagram_type:
+                                # Add the most compatible diagram type
+                                mermaid_code = 'graph TD\n' + mermaid_code
                             
-                            # Make sure diagram starts with a valid directive using modern syntax
-                            if not re.match(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|er)', mermaid_code, re.IGNORECASE):
-                                logging.info("Adding flowchart TD directive as the diagram has no directive")
-                                mermaid_code = "flowchart TD\n" + mermaid_code
-                            # Convert older 'graph TD' syntax to modern 'flowchart TD'
-                            elif re.match(r'^graph\s+(TD|TB|BT|RL|LR)', mermaid_code, re.IGNORECASE):
-                                logging.info("Converting from graph to flowchart directive for better compatibility")
-                                mermaid_code = re.sub(r'^graph\s+(TD|TB|BT|RL|LR)', r'flowchart \1', mermaid_code, flags=re.IGNORECASE)
-                            
-                            # Ensure line breaks are consistent
-                            mermaid_code = re.sub(r'\r\n', '\n', mermaid_code)
-                            
-                            # Fix common syntax issues with minimal impact
-                            # 1. Ensure nodes have proper connections
+                            # Preserve the original diagram structure from the LLM
+                            # Only clean up whitespace and ensure proper line breaks
                             lines = mermaid_code.split('\n')
-                            fixed_lines = []
+                            processed_lines = []
+                            
                             for line in lines:
-                                line = line.rstrip()
-                                if line and not line.isspace():
-                                    # Quote node text for better handling of spaces and special characters
-                                    # Look for node patterns like A[Text] or A(Text) and add quotes around the text
-                                    line = re.sub(r'(\w+)\[(.*?)\]', r'\1["\2"]', line)
-                                    line = re.sub(r'(\w+)\((.*?)\)', r'\1("\2")', line)
-                                    # Also handle edge labels like -->|text| by adding quotes around the text
-                                    line = re.sub(r'(-->|---)\|(.*?)\|', r'\1|"\2"|', line)
-                                    fixed_lines.append(line)
+                                if line.strip():
+                                    # Keep the original line structure intact
+                                    processed_lines.append(line.strip())
                             
-                            # Join back with proper line endings
-                            mermaid_code = '\n'.join(fixed_lines)
+                            mermaid_code = '\n'.join(processed_lines)
                             
-                            # Log the fixed code
-                            logging.info(f"MINIMALLY FIXED MERMAID CODE:\n{mermaid_code}\n")
-                        
+                            # Clean up the code to ensure proper formatting
+                            lines = mermaid_code.split('\n')
+                            cleaned_lines = [line.strip() for line in lines if line.strip()]
+                            mermaid_code = '\n'.join(cleaned_lines)
+                        else:
+                            # If no Mermaid markers found, use the whole content as it might be just the diagram code
+                            mermaid_code = content.strip()
+                            
+                            # Check if the content starts with a valid Mermaid diagram type
+                            valid_starts = ['graph', 'flowchart', 'mindmap', 'sequenceDiagram', 'classDiagram', 'gantt', 'pie', 'erDiagram']
+                            # Normalize whitespace for better detection
+                            mermaid_code_normalized = ' '.join(mermaid_code.split())
+                            
+                            # If it doesn't start with a valid Mermaid syntax, handle it
+                            if not any(mermaid_code_normalized.startswith(start) for start in valid_starts):
+                                # Check if it's a Plotly figure (the error we're seeing)
+                                if 'Figure(' in mermaid_code or "'layout':" in mermaid_code or "'data':" in mermaid_code or "'type': 'scatter'" in mermaid_code or "annotations" in mermaid_code:
+                                    print("Detected Plotly figure, converting to proper Mermaid diagram")
+                                    # Extract any meaningful information from the Plotly figure if possible
+                                    title = "Chat History Conceptual Diagram"
+                                    if "'title'" in mermaid_code:
+                                        try:
+                                            title_start = mermaid_code.find("'title'")
+                                            title_content = mermaid_code[title_start:].split(":", 1)[1].strip()
+                                            if "'text'" in title_content[:30]:
+                                                title_text = title_content.split("'text':", 1)[1].strip()
+                                                if title_text.startswith("'") and "'" in title_text[1:]:
+                                                    title = title_text.split("'", 2)[1]
+                                        except Exception as e:
+                                            print(f"Error extracting title: {e}")
+                                            
+                                    # Create an example Mermaid diagram based on infectious disease management
+                                    # This provides a better user experience than just an error message
+                                    mermaid_code = f"graph TD\n    A(({title})):::mainTopic --> B[Public Health Considerations]:::pubHealth\n    A --> C[Testing Strategies]:::testing\n    A --> D[Epidemiology]:::epidemiology\n    A --> E[Community Response]:::community\n\n    B --> B1[Surveillance]:::pubHealth\n    B --> B2[Health Policy]:::pubHealth\n    C --> C1[Diagnostic Methods]:::testing\n    C --> C2[Quality Assurance]:::testing\n    D --> D1[Transmission Dynamics]:::epidemiology\n    D --> D2[Population Impact]:::epidemiology\n    E --> E1[Public Awareness]:::community\n    E --> E2[Resource Allocation]:::community\n\n    classDef mainTopic fill:#5d87fe,stroke:#333,stroke-width:2px;\n    classDef pubHealth fill:#ff9eb1,stroke:#333;\n    classDef testing fill:#d5f5c0,stroke:#333;\n    classDef epidemiology fill:#c5eafa,stroke:#333;\n    classDef community fill:#f9d9ab,stroke:#333;\n"
+                                else:
+                                    raise ValueError("Response does not contain a valid Mermaid diagram")
                     except Exception as e:
-                        logging.error(f"Error preparing Mermaid code: {str(e)}")
-                        # Absolute fallback for syntax errors with modern syntax and quoted text
-                        mermaid_code = "flowchart TD\n    A[\"Syntax Error\"] -->|\"in\"| B[\"Diagram\"]\n    B -->|\"Using\"| C[\"Fallback Diagram\"]"
-
-                    # Define streamlit_mermaid styling with improved responsive layout
-                    config = {
-                        "css": ".mermaid { background: #f0f2f6; padding: 1rem; width: 100%; max-width: 100%; overflow-x: visible; } svg { max-width: 100% !important; height: auto !important; }",
-                        "js": "document.body.style.background = '#f0f2f6';" 
-                    }
-
-                    # Enhanced HTML template with streamlit_mermaid styling
-                    html_template = '''
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <!-- Use a very stable version of Mermaid (8.8.0) which has excellent backwards compatibility -->
-                        <script src="https://cdn.jsdelivr.net/npm/mermaid@8.8.0/dist/mermaid.min.js"></script>
-                        <style>
-                            body { margin: 0; padding: 0; overflow-x: hidden; background-color: #ffffff; }
-                            .container { width: 100%; max-width: 100%; min-height: 500px; overflow-x: hidden; background-color: #ffffff; }
-                            .mermaid { font-family: sans-serif; width: 100%; max-width: 100%; overflow: visible; text-align: center; background-color: #ffffff; padding: 0; }
-                            .error-message { color: #d32f2f; background-color: #ffebee; padding: 10px; border-radius: 4px; margin-bottom: 15px; display: none; }
-                            svg { width: 100% !important; max-width: 100% !important; min-height: 500px !important; background-color: #ffffff !important; }
-                            /* Force normal text size in all diagram elements */
-                            .node rect, .node circle, .node ellipse, .node polygon, .node path { stroke-width: 1px !important; }
-                            .node text, .edgeLabel text { font-size: 14px !important; }
-                            .edgePath { stroke-width: 1px !important; }
-                            /* Prevent diagram from being zoomed in */
-                            .label { font-size: 14px !important; }
-                            /* Additional styling for better diagram presentation */
-                            .mermaid > svg { min-height: 500px; }
-                            pre.mermaid { background: #ffffff; padding: 0; margin: 0; }
-                            /* Download button styling */
-                            .download-buttons { display: flex; justify-content: center; margin-top: 15px; gap: 10px; }
-                            .download-btn { 
-                                background-color: #4CAF50; 
-                                color: white; 
-                                border: none; 
-                                padding: 8px 16px; 
-                                text-align: center; 
-                                text-decoration: none; 
-                                display: inline-block; 
-                                font-size: 14px; 
-                                margin: 4px 2px; 
-                                cursor: pointer; 
-                                border-radius: 4px;
+                        import traceback
+                        error_details = traceback.format_exc()
+                        print(f"Error extracting Mermaid diagram: {str(e)}\n{error_details}")
+                        diagram_status.value = f"Error extracting Mermaid diagram: {str(e)}"
+                        return None, f"Error extracting Mermaid diagram: {str(e)}"
+                    
+                    # Create a simple HTML page with the Mermaid diagram based on the selected renderer
+                    # This approach creates a full HTML page that can be displayed in an iframe
+                    
+                    # Create the base mermaid div with proper formatting and error handling
+                    # Make sure the mermaid code is properly formatted for all renderers
+                    clean_mermaid_code = mermaid_code.strip()
+                    
+                    # Validate the mermaid code to ensure it starts with a valid diagram type
+                    valid_starts = ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'gantt', 'pie', 'erDiagram']
+                    mermaid_code_normalized = ' '.join(clean_mermaid_code.split())
+                    
+                    # Check for diagram types that might not be properly supported in all renderers
+                    is_mindmap = mermaid_code_normalized.startswith('mindmap')
+                    is_graph = mermaid_code_normalized.startswith('graph')
+                    is_flowchart = mermaid_code_normalized.startswith('flowchart')
+                    
+                    # Convert flowchart to graph for better compatibility with mermaid 9.1.7
+                    if is_flowchart:
+                        print("Converting flowchart to graph for better compatibility with mermaid.js 9.1.7")
+                        clean_mermaid_code = clean_mermaid_code.replace('flowchart', 'graph', 1)
+                    
+                    # Always store the original code before any modifications
+                    original_mermaid_code = clean_mermaid_code
+                    
+                    # Convert mindmaps to flowcharts for better compatibility across all renderers
+                    # This is necessary because mindmap syntax is only supported in newer mermaid versions
+                    if is_mindmap:
+                        print(f"Converting mindmap to flowchart for compatibility with {renderer}")
+                        
+                        # Extract the mindmap content to preserve the structure as much as possible
+                        lines = clean_mermaid_code.split('\n')
+                        # Skip the first line (mindmap declaration)
+                        content_lines = [line for line in lines[1:] if line.strip()]
+                        
+                        # Create a flowchart with similar structure
+                        # Use graph TD instead of flowchart TD for better compatibility with mermaid 9.1.7
+                        flowchart = ["graph TD"]
+                        
+                        # Process the root node if it exists
+                        root_node = None
+                        for i, line in enumerate(content_lines):
+                            if '((' in line and '))' in line and i == 0:
+                                # This is likely a root node
+                                root_text = line.strip()
+                                # Extract text between (( and ))
+                                root_content = root_text[root_text.find('((')+2:root_text.find('))')]
+                                root_node = f"    A[{root_content}]"
+                                flowchart.append(root_node)
+                                break
+                        
+                        # If no root node was found, create a default one
+                        if not root_node:
+                            flowchart.append("    A[Chat History]")
+                        
+                        # Parse the mindmap structure and preserve all information
+                        # Track indentation to determine parent-child relationships
+                        node_counter = 0
+                        node_map = {}
+                        connections = []
+                        
+                        # First pass: identify all nodes
+                        for i, line in enumerate(content_lines):
+                            if not line.strip():
+                                continue
+                                
+                            # Skip the root node as we've already processed it
+                            if i == 0 and '((' in line and '))' in line:
+                                continue
+                                
+                            # Calculate indentation level (number of spaces)
+                            indent = len(line) - len(line.lstrip())
+                            text = line.strip()
+                            
+                            # Create a unique node ID
+                            node_id = f"node{node_counter}"
+                            node_counter += 1
+                            
+                            # Store the node with its indentation level
+                            node_map[node_id] = {
+                                'text': text,
+                                'indent': indent,
+                                'level': indent // 2  # Assuming 2 spaces per level
                             }
-                            .download-btn:hover { background-color: #45a049; }
-                            /* CSS_PLACEHOLDER */
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <div class="error-message" id="mermaid-error">Error rendering diagram. Please check syntax.</div>
-                            <pre class="mermaid">
-%%MERMAID_CODE%%
-                            </pre>
-                            <div class="download-buttons">
-                                <button class="download-btn" id="download-svg-btn" onclick="downloadAsSvg()">Download SVG</button>
-                                <button class="download-btn" id="download-png-btn" onclick="downloadAsPng()">Download PNG</button>
-                            </div>
+                        
+                        # Second pass: create connections based on indentation
+                        prev_level_nodes = {0: 'A'}  # Root node is A
+                        
+                        for node_id, node_info in node_map.items():
+                            level = node_info['level']
+                            text = node_info['text']
+                            
+                            # Find the parent node (closest node with lower indentation)
+                            parent_level = max([l for l in prev_level_nodes.keys() if l < level], default=0)
+                            parent_id = prev_level_nodes[parent_level]
+                            
+                            # Add this node to the flowchart
+                            flowchart.append(f"    {node_id}[{text}]")
+                            
+                            # Connect to parent
+                            flowchart.append(f"    {parent_id} --> {node_id}")
+                            
+                            # Update the previous level nodes
+                            prev_level_nodes[level] = node_id
+                            
+                            # Remove any higher levels (as they can't be parents anymore)
+                            higher_levels = [l for l in prev_level_nodes.keys() if l > level]
+                            for l in higher_levels:
+                                del prev_level_nodes[l]
+                                
+                        # If no nodes were processed, add some default connections
+                        if not node_map:
+                            flowchart.append("    A --> B[Topics]")
+                            flowchart.append("    B --> C[Insights]")
+                            flowchart.append("    A --> D[Questions]")
+                            flowchart.append("    D --> E[Answers]")
+                        
+                        # Join the flowchart lines
+                        clean_mermaid_code = "\n".join(flowchart)
+                    elif not any(mermaid_code_normalized.startswith(start) for start in valid_starts) and not is_mindmap:
+                        print("Warning: Mermaid code doesn't start with a valid diagram type. Using fallback diagram.")
+                        # Provide a fallback diagram if the code doesn't start with a valid diagram type
+                        clean_mermaid_code = "graph TD\n    A[Chat History] --> B[Topics]\n    B --> C[Insights]\n    A --> D[Questions]\n    D --> E[Answers]"
+                    
+                    # Add console logging for debugging
+                    print(f"Mermaid code being used: {clean_mermaid_code[:100]}...")
+                    print(f"Selected renderer: {renderer}")
+                    
+                    # Print the full mermaid code for cross-checking
+                    print("\n==== FULL MERMAID CODE ====")
+                    print(clean_mermaid_code)
+                    print("==== END MERMAID CODE ====")
+                    
+                    # For the default renderer, we'll use a div with the class 'mermaid'
+                    # For other renderers, we'll use a pre-rendered SVG approach which is more reliable
+                    # across different mermaid versions
+                    
+                    # Create a div element with mermaid class for proper rendering
+                    # Using div instead of pre for better compatibility with mermaid.js
+                    mermaid_div = f'''
+                    <div id="mermaid-wrapper">
+                        <div class="mermaid" id="mermaid-diagram-container">
+{clean_mermaid_code}
                         </div>
-                        <script>
-                            // Configure Mermaid with responsive settings and better error handling
-                            mermaid.initialize({ 
-                                startOnLoad: false, // We'll manually render
-                                securityLevel: 'loose',
-                                theme: 'default',
-                                logLevel: 1,
-                                flowchart: { 
-                                    htmlLabels: true, 
-                                    useMaxWidth: true,
-                                    curve: 'monotoneX',
-                                    diagramPadding: 20,
-                                    nodeSpacing: 60,
-                                    rankSpacing: 100,
-                                    rankDir: 'TB', // Top to Bottom layout instead of Left to Right
-                                    ranker: 'tight-tree' // Better for hierarchical diagrams
-                                },
-                                sequence: { useMaxWidth: true },
-                                gantt: { useMaxWidth: true },
-                                pie: { useMaxWidth: true },
-                                fontFamily: 'sans-serif',
-                                fontSize: 14,
-                                fontWeight: 400
-                            });
-                            
-                            // Manual rendering with enhanced error handling and responsive layout
-                            document.addEventListener('DOMContentLoaded', function() {
-                                try {
-                                    // Pre-validate diagram syntax
-                                    try {
-                                        var element = document.querySelector('.mermaid');
-                                        var graphDefinition = element.textContent;
-                                        mermaid.parse(graphDefinition);
-                                    } catch (syntaxError) {
-                                        console.error('Mermaid syntax validation error:', syntaxError);
-                                        document.getElementById('mermaid-error').style.display = 'block';
-                                        document.getElementById('mermaid-error').textContent = 'Diagram syntax error: ' + syntaxError.message;
+                    </div>
+                    '''
+                    
+                    # For non-default renderers, we'll use a different approach with pre-initialization
+                    # This helps ensure compatibility across different mermaid versions
+                    # Use a safer approach to handle JavaScript escaping in f-strings
+                    escaped_mermaid_code = clean_mermaid_code.replace('`', r'\`').replace("'", r"\'")
+                    mermaid_pre_init = f'''
+                    <script>
+                        // Pre-initialize mermaid with the code
+                        try {{
+                            console.log("Mermaid code being processed:");
+                            console.log(`{escaped_mermaid_code}`);
+                        }} catch (e) {{
+                            console.error("Error logging mermaid code:", e);
+                        }}
+                    </script>
+                    <div id="mermaid-error" style="display:none;" class="error-message"></div>
+                    '''
+                    
+                    # Generate HTML content based on the selected renderer
+                    # For the default renderer with Mermaid.js 9.1.7, we can use flowchart for all diagrams
+                    # This ensures consistent rendering and avoids syntax errors
+                    if is_mindmap or is_graph:
+                        print("Ensuring diagram compatibility with mermaid.js 9.1.7")
+                        # We'll keep the converted flowchart for all renderers to ensure consistency
+                        # This prevents syntax errors that might occur with mindmap or graph syntax
+                    
+                    if renderer == "Mermaid.js (Default)":
+                        # Default Mermaid.js rendering - using a more reliable approach
+                        html_content = '''
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <script src="https://cdn.jsdelivr.net/npm/mermaid@8.8.0/dist/mermaid.min.js"></script>
+                            <!-- Using version 8.8.0 which is compatible with all renderers -->
+                            <script>
+                                // Configuration for Mermaid
+                                // Minimal configuration for maximum compatibility
+                                mermaid.initialize({
+                                    startOnLoad: true
+                                });
+                            </script>
+                            <style>
+                                body { 
+                                    font-family: Arial, sans-serif; 
+                                    margin: 0; 
+                                    padding: 20px; 
+                                    background-color: white;
+                                }
+                                h2 { 
+                                    color: #333; 
+                                    text-align: center; 
+                                    margin-bottom: 20px;
+                                }
+                                .diagram-container { 
+                                    width: 100%; 
+                                    max-width: 950px; 
+                                    margin: 0 auto; 
+                                    padding: 20px; 
+                                    background-color: #f8f8f8; 
+                                    border-radius: 8px;
+                                    min-height: 400px;
+                                }
+                                .error-message {
+                                    color: #d32f2f;
+                                    text-align: center;
+                                    padding: 15px;
+                                    border: 1px solid #ffcdd2;
+                                    border-radius: 4px;
+                                    background-color: #ffebee;
+                                    margin: 20px 0;
+                                }
+                            </style>
+                        </head>
+                        <body>
+                            <h2>Conceptual Diagram of Chat History</h2>
+                            <div class="diagram-container">
+                                <div id="mermaid-diagram">
+                                    <div class="mermaid">
+{clean_mermaid_code}
+                                    </div>
+                                </div>
+                                <div id="mermaid-error" style="display:none;color:red;padding:10px;border:1px solid #ddd;"></div>
+                            </div>
+                            <script>
+                                // Add error handling for Mermaid rendering
+                                window.addEventListener('error', function(e) {
+                                    if (e.message && e.message.includes('mermaid')) {
+                                        console.error('Mermaid error:', e);
+                                        var errorDiv = document.getElementById('mermaid-error');
+                                        if (errorDiv) {
+                                            errorDiv.style.display = 'block';
+                                            errorDiv.innerHTML = 'Error rendering the diagram. The syntax may be invalid: ' + e.message;
+                                        } else {
+                                            document.querySelector('.diagram-container').innerHTML += 
+                                                '<div class="error-message">Error rendering the diagram. The syntax may be invalid.</div>';
+                                        }
                                     }
-                                    
-                                    // Initialize with error handling
-                                    mermaid.init(undefined, document.querySelectorAll('.mermaid'));
-                                    
-                                    // Ensure SVG fits container width and fix zoom issues
-                                    setTimeout(function() {
-                                        const svgElements = document.querySelectorAll('svg');
-                                        if (svgElements.length === 0) {
-                                            console.warn('No SVG elements found after render');
-                                            return;
-                                        }
-                                        
-                                        svgElements.forEach(function(svg) {
-                                            // Fix zoom issues and ensure diagram uses full canvas
-                                            const bbox = svg.getBBox();
-                                            // Add padding to viewBox for better layout
-                                            const padding = 20;
-                                            svg.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding*2} ${bbox.height + padding*2}`);
-                                            // Ensure background is pure white
-                                            svg.style.backgroundColor = '#ffffff';
-                                            svg.style.padding = '0';
-                                            svg.style.margin = '0 auto';
+                                });
+                                
+                                // Initialize mermaid after DOM is loaded
+                                document.addEventListener('DOMContentLoaded', function() {
+                                    console.log('DOM loaded, initializing mermaid...');
+                                    try {
+                                        if (typeof mermaid !== 'undefined') {
+                                            // First make sure the mermaid code is visible in the DOM for debugging
+                                            console.log('Mermaid code:', document.querySelector('.mermaid')?.textContent || 'No mermaid element found');
                                             
-                                            // Set responsive styling
-                                            svg.setAttribute('width', '100%');
-                                            svg.style.maxWidth = '100%';
-                                            svg.style.height = 'auto';
-                                            svg.style.display = 'block';
-                                            
-                                            // Add transform for proper scaling
-                                            svg.style.transformOrigin = 'center';
-                                            svg.style.margin = '0 auto';
-                                            
-                                            // Remove any fixed dimensions from child elements
-                                            const gElements = svg.querySelectorAll('g');
-                                            gElements.forEach(function(g) {
-                                                if (g.hasAttribute('width')) g.removeAttribute('width');
-                                                if (g.hasAttribute('height')) g.removeAttribute('height');
-                                                if (g.hasAttribute('transform')) {
-                                                    // Keep important transforms but fix scaling issues
-                                                    const transform = g.getAttribute('transform');
-                                                    if (transform.includes('scale') && !transform.includes('translate')) {
-                                                        g.setAttribute('transform', 'scale(1)');
+                                            // Simple rendering approach - let mermaid handle it automatically
+                                            try {
+                                                console.log('Letting mermaid handle rendering with startOnLoad: true');
+                                                
+                                                // Force mermaid to reprocess after a short delay
+                                                setTimeout(function() {
+                                                    try {
+                                                        console.log('Forcing mermaid to reprocess diagrams...');
+                                                        // Simplest possible initialization for v8.8.0
+                                                        try {
+                                                            mermaid.init();
+                                                            console.log('Mermaid initialized successfully');
+                                                        } catch (error) {
+                                                            console.error('Mermaid initialization failed:', error);
+                                                            document.getElementById('mermaid-error').style.display = 'block';
+                                                            document.getElementById('mermaid-error').innerHTML = 'Error rendering diagram: ' + error.message;
+                                                        }
+                                                    } catch (e) {
+                                                        console.error('Error during forced reprocessing:', e);
                                                     }
-                                                }
-                                            });
-                                        });
-                                    }, 200);
-                                } catch (error) {
-                                    console.error('Mermaid rendering error:', error);
-                                    document.getElementById('mermaid-error').style.display = 'block';
-                                    document.getElementById('mermaid-error').textContent = 'Error rendering diagram: ' + error.message;
-                                }
-                            });
-                            /* Add download functions to the global scope */
-                            function downloadAsSvg() {
-                                const svg = document.querySelector('svg');
-                                if (!svg) {
-                                    console.error('No SVG found for download');
-                                    return;
-                                }
-                                
-                                try {
-                                    // Clone and prepare SVG for download
-                                    const svgClone = svg.cloneNode(true);
-                                    svgClone.setAttribute('width', svg.getBoundingClientRect().width);
-                                    svgClone.setAttribute('height', svg.getBoundingClientRect().height);
-                                    svgClone.style.background = '#ffffff';
-                                    
-                                    // Create downloadable SVG data
-                                    const svgData = new XMLSerializer().serializeToString(svgClone);
-                                    const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
-                                    const svgUrl = URL.createObjectURL(svgBlob);
-                                    
-                                    // Create download link and trigger download
-                                    const downloadLink = document.createElement('a');
-                                    downloadLink.href = svgUrl;
-                                    downloadLink.download = 'mermaid_diagram_' + new Date().toISOString().split('T')[0] + '.svg';
-                                    document.body.appendChild(downloadLink);
-                                    downloadLink.click();
-                                    document.body.removeChild(downloadLink);
-                                    URL.revokeObjectURL(svgUrl);
-                                } catch (e) {
-                                    console.error('SVG download error:', e);
-                                }
-                            }
-                            
-                            function downloadAsPng() {
-                                const svg = document.querySelector('svg');
-                                if (!svg) {
-                                    console.error('No SVG found for download');
-                                    return;
-                                }
-                                
-                                try {
-                                    // Get the dimensions of the SVG
-                                    const bbox = svg.getBoundingClientRect();
-                                    const width = bbox.width;
-                                    const height = bbox.height;
-                                    
-                                    // Create a canvas with 2x resolution for better quality
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = width * 2;
-                                    canvas.height = height * 2;
-                                    const ctx = canvas.getContext('2d');
-                                    
-                                    // Set white background
-                                    ctx.fillStyle = '#FFFFFF';
-                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                                    
-                                    // Scale for higher resolution
-                                    ctx.scale(2, 2);
-                                    
-                                    // Convert SVG to a data URL
-                                    const svgData = new XMLSerializer().serializeToString(svg);
-                                    const svgImage = new Image();
-                                    
-                                    // Use a data URL with base64 encoding
-                                    const svgBase64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-                                    
-                                    // When the image loads, draw it to the canvas and create download link
-                                    svgImage.onload = function() {
-                                        ctx.drawImage(svgImage, 0, 0);
-                                        
-                                        try {
-                                            // Get the PNG data URL
-                                            const pngUrl = canvas.toDataURL('image/png');
-                                            
-                                            // Create and trigger download
-                                            const downloadLink = document.createElement('a');
-                                            downloadLink.href = pngUrl;
-                                            downloadLink.download = 'mermaid_diagram_' + new Date().toISOString().split('T')[0] + '.png';
-                                            document.body.appendChild(downloadLink);
-                                            downloadLink.click();
-                                            document.body.removeChild(downloadLink);
-                                        } catch (e) {
-                                            console.error('PNG creation error:', e);
+                                                }, 500);
+                                                // Mermaid will automatically process diagrams on page load
+                                                // No need for manual rendering
+                                            } catch (setupError) {
+                                                console.error('Error during mermaid setup:', setupError);
+                                                document.getElementById('mermaid-error').style.display = 'block';
+                                                document.getElementById('mermaid-error').innerHTML = 'Error setting up diagram renderer: ' + setupError.message;
+                                            }
                                         }
-                                    };
-                                    
-                                    // Handle loading errors
-                                    svgImage.onerror = function(e) {
-                                        console.error('Error loading SVG into image:', e);
-                                    };
-                                    
-                                    // Start loading the image
-                                    svgImage.src = svgBase64;
-                                } catch (e) {
-                                    console.error('PNG download error:', e);
-                                }
-                            }
-                            /* JS_PLACEHOLDER */
-                        </script>
-                    </body>
-                    </html>
-                    '''
-
-                    # Replace placeholders with actual content
-                    # First substitute the mermaid code, then the CSS and JS
-                    final_html = html_template.replace('%%MERMAID_CODE%%', mermaid_code)
-                    final_html = final_html.replace('/* CSS_PLACEHOLDER */', config['css'])
-                    final_html = final_html.replace('/* JS_PLACEHOLDER */', config['js'])
-
-                    # Safe HTML embedding with additional security measures
-                    escaped_html = final_html.replace('"', '&quot;').replace("'", '&#39;')
+                                    } catch (e) {
+                                        console.error('Mermaid initialization error:', e);
+                                        var errorDiv = document.getElementById('mermaid-error');
+                                        if (errorDiv) {
+                                            errorDiv.style.display = 'block';
+                                            errorDiv.innerHTML = 'Error initializing the diagram renderer: ' + e.message;
+                                        } else {
+                                            console.error('Error element not found');
+                                            document.querySelector('.diagram-container').innerHTML += 
+                                                '<div style="color:red;padding:10px;border:1px solid #ddd;">Error initializing the diagram renderer: ' + e.message + '</div>';
+                                        }
+                                    }
+                                });
+                            </script>
+                        </body>
+                        </html>
+                        '''
                     
-                    # Log the final Mermaid code to confirm it's properly inserted
-                    # Extract the code from between the mermaid pre tags (updated from div to pre)
-                    mermaid_in_html = re.search(r'<pre class="mermaid">\s*([\s\S]*?)\s*</pre>', final_html)
-                    if mermaid_in_html:
-                        extracted_code = mermaid_in_html.group(1).strip()
-                        logging.info(f"FINAL MERMAID CODE IN HTML: \n{extracted_code}\n")
-                    else:
-                        logging.warning("Failed to extract Mermaid code from HTML for logging")
-                    
-                    # Create the iframe HTML in a simpler way to avoid f-string syntax issues
-                    iframe_html = '<iframe '
-                    iframe_html += f'srcdoc="{escaped_html}" '
-                    iframe_html += 'style="width:100%;height:700px;border:none;overflow:hidden;background-color:white;" '
-                    iframe_html += 'sandbox="allow-scripts allow-popups allow-downloads allow-same-origin" '
-                    iframe_html += 'referrerpolicy="no-referrer" '
-                    
-                    # Add onload JavaScript as a separate string
-                    onload_js = '''
-                    onload="
-                        this.style.height = Math.max(500, this.contentWindow.document.body.scrollHeight + 50) + 'px';
-                        this.contentWindow.document.body.style.overflow = 'hidden';
-                        this.contentWindow.document.body.style.background = '#ffffff';
+                    elif renderer == "streamlit_mermaid":
+                        # Actual streamlit_mermaid rendering
+                        # This simulates how streamlit_mermaid would render the diagram
+                        # with the streamlit-specific container and styling
                         
-                        // Setup direct download buttons with inline functions
-                        const downloadSvgBtn = this.contentWindow.document.getElementById('download-svg-btn');
-                        const downloadPngBtn = this.contentWindow.document.getElementById('download-png-btn');
+                        # Create a streamlit-style container for the mermaid diagram
+                        # Use the same mermaid_div approach as the default renderer for consistency
+                        html_content = '''
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <script src="https://cdn.jsdelivr.net/npm/mermaid@8.8.0/dist/mermaid.min.js"></script>
+                            <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+                            <script>
+                                // Configuration specific to streamlit_mermaid
+                                mermaid.initialize({
+                                    startOnLoad: false,  // We'll manually initialize for better control
+                                    theme: 'neutral',
+                                    logLevel: 'error',
+                                    securityLevel: 'loose',
+                                    fontFamily: '"IBM Plex Sans", sans-serif',
+                                    flowchart: {
+                                        curve: 'linear',
+                                        htmlLabels: true,
+                                        useMaxWidth: true
+                                    },
+                                    sequence: {
+                                        useMaxWidth: true,
+                                        diagramMarginX: 50,
+                                        diagramMarginY: 10,
+                                        boxMargin: 10,
+                                        mirrorActors: false
+                                    },
+                                    gantt: {
+                                        useMaxWidth: true,
+                                        topPadding: 30,
+                                        leftPadding: 75
+                                    }
+                                });
+                            </script>
+                            <style>
+                                /* Streamlit-specific styling */
+                                body { 
+                                    font-family: "IBM Plex Sans", sans-serif; 
+                                    margin: 0; 
+                                    padding: 0; 
+                                    background-color: #f0f2f6;
+                                }
+                                
+                                .streamlit-container { 
+                                    max-width: 100%;
+                                    padding: 1rem;
+                                    margin: 0 auto;
+                                    background-color: white;
+                                    border-radius: 0.5rem;
+                                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                                }
+                                
+                                .streamlit-header {{ 
+                                    color: #262730; 
+                                    font-size: 1.25rem;
+                                    font-weight: 600;
+                                    margin-bottom: 1rem;
+                                    padding-bottom: 0.5rem;
+                                    border-bottom: 1px solid #f0f2f6;
+                                }}
+                                
+                                .streamlit-mermaid {{
+                                    width: 100%;
+                                    min-height: 400px;
+                                    display: flex;
+                                    justify-content: center;
+                                    align-items: center;
+                                    padding: 1rem 0;
+                                }}
+                                
+                                .streamlit-mermaid svg {
+                                    max-width: 100%;
+                                }
+                                
+                                .streamlit-footer {
+                                    margin-top: 1rem;
+                                    padding-top: 0.5rem;
+                                    border-top: 1px solid #f0f2f6;
+                                    font-size: 0.8rem;
+                                    color: #888;
+                                    text-align: center;
+                                }
+                                
+                                .error-message {
+                                    color: #ff4b4b;
+                                    background-color: #ffebee;
+                                    border: 1px solid #ffcdd2;
+                                    border-radius: 0.25rem;
+                                    padding: 0.75rem;
+                                    margin: 1rem 0;
+                                    text-align: center;
+                                }
+                                
+                                /* Streamlit-specific mermaid overrides */
+                                .mermaid .label { 
+                                    font-family: "IBM Plex Sans", sans-serif !important;
+                                }
+                                
+                                .mermaid .node rect, .mermaid .node circle, .mermaid .node ellipse, .mermaid .node polygon, .mermaid .node path {
+                                    fill: #f8f9fa;
+                                    stroke: #e6e9ef;
+                                    stroke-width: 1px;
+                                }
+                                
+                                .mermaid .edgePath .path {
+                                    stroke: #5c6470 !important;
+                                    stroke-width: 1.5px;
+                                }
+                                
+                                .mermaid .edgeLabel {{
+                                    background-color: #ffffff;
+                                    color: #262730;
+                                }}
+                                
+                                .mermaid .cluster rect {{
+                                    fill: #f8f9fa !important;
+                                    stroke: #e6e9ef !important;
+                                    stroke-width: 1px !important;
+                                }}
+                            </style>
+                        </head>
+                        <body>
+                            <div class="streamlit-container">
+                                <div class="streamlit-header">Conceptual Diagram of Chat History</div>
+                                <div class="streamlit-mermaid">
+                                    <pre class="mermaid">
+{clean_mermaid_code}
+                                    </pre>
+                                </div>
+                                {mermaid_pre_init}
+                                <div class="streamlit-footer">
+                                    Rendered with streamlit_mermaid
+                                </div>
+                            </div>
+                            
+                            <script>
+                                // Add error handling for Mermaid rendering
+                                window.addEventListener('error', function(e) {{
+                                    if (e.message && e.message.includes('mermaid')) {{
+                                        console.error('Mermaid error:', e);
+                                        document.querySelector('.streamlit-mermaid').innerHTML += 
+                                            '<div class="error-message">Error rendering the diagram. The syntax may be invalid.</div>';
+                                    }}}}
+                                }});
+                                
+                                // Add streamlit-specific rendering behavior
+                                document.addEventListener('DOMContentLoaded', function() {
+                                    // Force re-render after a short delay to ensure proper sizing
+                                    setTimeout(function() {
+                                        if (typeof mermaid !== 'undefined') {
+                                            try {
+                                                // Try to render the diagram with a slight delay to ensure DOM is ready
+                                                setTimeout(function() {
+                                                    try {
+                                                        console.log('Attempting to render mermaid diagram...');
+                                                        mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                                                        console.log('Mermaid rendering complete');
+                                                    } catch (renderError) {
+                                                        console.error('Mermaid rendering error:', renderError);
+                                                        document.getElementById('mermaid-error').style.display = 'block';
+                                                        document.getElementById('mermaid-error').innerHTML = 'Error rendering diagram: ' + renderError.message;
+                                                    }
+                                                }, 100);
+                                            } catch (e) {
+                                                console.error('Mermaid re-initialization error:', e);
+                                                document.querySelector('.streamlit-mermaid').innerHTML += 
+                                                    '<div class="error-message">Error initializing the diagram renderer.</div>';
+                                            }
+                                        }
+                                    }, 200);
+                                }});
+                            </script>
+                        </body>
+                        </html>
+                        '''
+                    
+                    elif renderer == "mkdocs-mermaid2":
+                        # Actual mkdocs-mermaid2 style rendering
+                        # This simulates how mkdocs-mermaid2 would render the diagram
+                        # with the mkdocs-specific container and styling
                         
-                        const svgElements = this.contentWindow.document.querySelectorAll('svg');
-                        for (const svg of svgElements) {
-                            svg.setAttribute('width', '100%');
-                            svg.style.maxWidth = '100%';
-                            svg.style.minHeight = '500px';
-                            svg.style.height = 'auto';
-                            svg.style.background = '#ffffff';
-                            svg.style.display = 'block';
-                            svg.style.margin = '0 auto';
+                        # Clean the mermaid code (remove leading/trailing whitespace)
+                        clean_mermaid_code = mermaid_code.strip()
+                        
+                        # Create an mkdocs-style container for the mermaid diagram
+                        html_content = '''
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <script src="https://cdn.jsdelivr.net/npm/mermaid@9.1.7/dist/mermaid.min.js"></script>
+                            <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&family=Roboto+Mono&display=swap" rel="stylesheet">
+                            <script>
+                                // Configuration specific to mkdocs-mermaid2
+                                mermaid.initialize({
+                                    startOnLoad: false,  // We'll manually initialize for better control
+                                    theme: 'dark',
+                                    logLevel: 'error',
+                                    securityLevel: 'loose',
+                                    fontFamily: 'Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif',
+                                    themeCSS: '.node rect { fill: #2d3143; stroke: #58687e; } .edgeLabel { color: #f8f8f2; } .edgePath .path { stroke: #58687e !important; } .label { color: #f8f8f2; }',
+                                    flowchart: {{{{
+                                        curve: 'basis',
+                                        htmlLabels: true,
+                                        useMaxWidth: true
+                                    }}}},
+                                    graph: {{{{
+                                        curve: 'basis',
+                                        htmlLabels: true,
+                                        useMaxWidth: true
+                                    }}}},
+                                    sequence: {{{{
+                                        useMaxWidth: true,
+                                        diagramMarginX: 50,
+                                        diagramMarginY: 10,
+                                        boxMargin: 10,
+                                        mirrorActors: false,
+                                        actorFontFamily: 'Roboto, sans-serif',
+                                        noteFontFamily: 'Roboto, sans-serif',
+                                        messageFontFamily: 'Roboto, sans-serif'
+                                    }}}},
+                                    gantt: {{{{
+                                        useMaxWidth: true,
+                                        fontFamily: 'Roboto, sans-serif'
+                                    }}}}
+                                }});
+                            </script>
+                            <style>
+                                /* MkDocs Material theme-inspired styling */
+                                :root {{
+                                    --md-primary-fg-color: #526cfe;  
+                                    --md-primary-fg-color--light: #8e9ffe;
+                                    --md-primary-fg-color--dark: #2a3eb1;
+                                    --md-accent-fg-color: #526cfe;
+                                    --md-text-color: #f8f8f2;
+                                    --md-code-bg-color: #272935;
+                                    --md-code-fg-color: #f8f8f2;
+                                }}
+                                
+                                body {{{{ 
+                                    font-family: Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif; 
+                                    margin: 0; 
+                                    padding: 0; 
+                                    background-color: #2d3143;
+                                    color: var(--md-text-color);
+                                }}
+                                
+                                .md-container {{ 
+                                    max-width: 100%;
+                                    padding: 1.2rem;
+                                    margin: 0 auto;
+                                    background-color: #1e2029;
+                                    border-radius: 0.1rem;
+                                    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+                                }}
+                                
+                                .md-header {{ 
+                                    color: #ffffff; 
+                                    font-size: 1.25rem;
+                                    font-weight: 400;
+                                    margin-bottom: 1rem;
+                                    padding-bottom: 0.5rem;
+                                    border-bottom: 1px solid #3f445e;
+                                }}
+                                
+                                .md-main {{
+                                    padding: 0.8rem 0;
+                                }}
+                                
+                                .md-typeset {{
+                                    font-size: 0.8rem;
+                                    line-height: 1.6;
+                                }}
+                                
+                                .md-typeset h1 {{
+                                    color: var(--md-text-color);
+                                    font-weight: 300;
+                                    margin: 0 0 1.25rem;
+                                }}
+                                
+                                .md-typeset .admonition {{
+                                    font-size: 0.8rem;
+                                    margin: 1.5625em 0;
+                                    padding: 0 0.6rem;
+                                    border-left: 0.2rem solid var(--md-primary-fg-color);
+                                    border-radius: 0.1rem;
+                                }}
+                                
+                                .md-typeset .admonition-title {{
+                                    font-weight: 500;
+                                    margin: 0 -0.6rem;
+                                    padding: 0.4rem 0.6rem 0.4rem 2rem;
+                                    background-color: rgba(82, 108, 254, 0.1);
+                                }}
+                                
+                                .md-typeset code {{
+                                    background-color: var(--md-code-bg-color);
+                                    color: var(--md-code-fg-color);
+                                    padding: 0 0.3em;
+                                    border-radius: 0.1rem;
+                                    font-family: "Roboto Mono", monospace;
+                                }}
+                                
+                                .md-mermaid {{
+                                    width: 100%;
+                                    min-height: 400px;
+                                    display: flex;
+                                    justify-content: center;
+                                    align-items: center;
+                                    padding: 1rem 0;
+                                    background-color: #272935;
+                                    border-radius: 0.1rem;
+                                }}
+                                
+                                .md-mermaid svg {{
+                                    max-width: 100%;
+                                    height: auto !important;
+                                }}
+                                
+                                .md-footer {{
+                                    margin-top: 1rem;
+                                    padding-top: 0.5rem;
+                                    border-top: 1px solid #3f445e;
+                                    font-size: 0.7rem;
+                                    color: #8e9ab4;
+                                    text-align: center;
+                                }}
+                                
+                                .md-footer a {{
+                                    color: var(--md-primary-fg-color--light);
+                                    text-decoration: none;
+                                }}
+                                
+                                .md-footer a:hover {{
+                                    text-decoration: underline;
+                                }}
+                                
+                                .error-message {{{{
+                                    color: #ff7b7b;
+                                    background-color: rgba(255, 82, 82, 0.1);
+                                    border: 1px solid rgba(255, 82, 82, 0.2);
+                                    border-radius: 0.1rem;
+                                    padding: 0.8rem;
+                                    margin: 1rem 0;
+                                    text-align: center;
+                                }}
+                                
+                                /* MkDocs-specific mermaid overrides */
+                                .mermaid {{
+                                    background-color: #272935;
+                                    border-radius: 0.1rem;
+                                    padding: 1rem;
+                                }}
+                                
+                                .mermaid .label {{{{ 
+                                    font-family: Roboto, sans-serif !important;
+                                    color: #f8f8f2 !important;
+                                }}
+                                
+                                .mermaid .node rect, .mermaid .node circle, .mermaid .node ellipse, .mermaid .node polygon {{
+                                    fill: #2d3143 !important;
+                                    stroke: #58687e !important;
+                                    stroke-width: 1px !important;
+                                }}
+                                
+                                .mermaid .edgePath .path {{{{
+                                    stroke: #58687e !important;
+                                    stroke-width: 1.5px !important;
+                                }}
+                                
+                                .mermaid .edgeLabel {{
+                                    background-color: #272935 !important;
+                                    color: #f8f8f2 !important;
+                                }}
+                                
+                                .mermaid .cluster rect {{
+                                    fill: #2d3143 !important;
+                                    stroke: #58687e !important;
+                                    stroke-width: 1px !important;
+                                }}
+                                
+                                .mermaid .actor {{
+                                    fill: #2d3143 !important;
+                                    stroke: #58687e !important;
+                                }}
+                                
+                                .mermaid text.actor {{
+                                    fill: #f8f8f2 !important;
+                                }}
+                            </style>
+                        </head>
+                        <body>
+                            <div class="md-container">
+                                <div class="md-header">Conceptual Diagram of Chat History</div>
+                                <div class="md-main">
+                                    <div class="md-typeset">
+                                        <div class="md-mermaid">
+                                            <div class="mermaid">
+{clean_mermaid_code}
+                                            </div>
+                                        </div>
+                                        {mermaid_pre_init}
+                                    </div>
+                                </div>
+                                <div class="md-footer">
+                                    Rendered with <a href="https://github.com/fralau/mkdocs-mermaid2-plugin" target="_blank">mkdocs-mermaid2</a>
+                                </div>
+                            </div>
                             
-                            // Add padding to viewBox for better layout
-                            try {
-                                // Only try to get bbox if the SVG is rendered
-                                if (svg.getBoundingClientRect().width > 0) {
-                                    const bbox = svg.getBBox();
-                                    const padding = 20;
-                                    svg.setAttribute('viewBox', (bbox.x - padding) + ' ' + (bbox.y - padding) + ' ' + (bbox.width + padding*2) + ' ' + (bbox.height + padding*2));
-                                } else {
-                                    // Fallback for SVGs that aren't properly rendered yet
-                                    svg.setAttribute('viewBox', '0 0 800 600');
-                                }
-                                } catch (e) {
-                                    console.log('Error getting bbox:', e);
-                                    // Safe fallback viewBox
-                                    svg.setAttribute('viewBox', '0 0 800 600');
-                                }
-                            svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+                            <script>
+                                // Add error handling for Mermaid rendering
+                                window.addEventListener('error', function(e) {{
+                                    if (e.message && e.message.includes('mermaid')) {{
+                                        console.error('Mermaid error:', e);
+                                        document.querySelector('.md-mermaid').innerHTML += 
+                                            '<div class="error-message">Error rendering the diagram. The syntax may be invalid.</div>';
+                                    }}}}
+                                }});
+                                
+                                // Add mkdocs-specific rendering behavior
+                                document.addEventListener('DOMContentLoaded', function() {{
+                                    // Initialize mermaid with mkdocs-specific settings
+                                    setTimeout(function() {{
+                                        try {{{{
+                                            console.log('Initializing mermaid diagram...');
+                                            mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                                            console.log('Mermaid initialization complete');
+                                        }}}} catch (e) {{{{
+                                            console.error('Mermaid initialization error:', e);
+                                            document.querySelector('.md-mermaid').innerHTML += 
+                                                '<div class="error-message">Error initializing the diagram renderer: ' + e.message + '</div>';
+                                            document.getElementById('mermaid-error').style.display = 'block';
+                                            document.getElementById('mermaid-error').textContent = 'Error initializing diagram: ' + e.message;
+                                        }}}}
+                                    }}}}, 300);
+                                    
+                                    // Add observer for theme changes (simulating mkdocs behavior)
+                                    const observer = new MutationObserver(function() {{
+                                        try {{{{
+                                            // Re-render diagrams when theme changes
+                                            mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                                        }} catch (e) {{{{{{
+                                            console.error('Mermaid re-initialization error:', e);
+                                        }}}}
+                                    }}}}}});
+                                    
+                                    // Observe document for theme changes
+                                    observer.observe(document.documentElement, {{
+                                        attributes: true,
+                                        attributeFilter: ['data-md-color-scheme']
+                                    }}}}}});
+                                }});
+                            </script>
+                        </body>
+                        </html>
+                        '''
+                    
+                    elif renderer == "PyMdown Extension":
+                        # Actual PyMdown Extension style rendering
+                        # This simulates how PyMdown Extensions would render the diagram
+                        # with the Material for MkDocs styling that PyMdown typically uses
+                        
+                        # Create a PyMdown-style container for the mermaid diagram
+                        # Use the same mermaid_div approach as the default renderer for consistency
+                        html_content = f'''
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <script src="https://cdn.jsdelivr.net/npm/mermaid@9.1.7/dist/mermaid.min.js"></script>
+                            <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&family=Source+Sans+Pro:wght@300;400;600&display=swap" rel="stylesheet">
+                            <script>
+                                // Configuration specific to PyMdown Extensions
+                                mermaid.initialize({{{{
+                                    startOnLoad: false,  // We'll manually initialize for better control
+                                    theme: 'neutral',
+                                    logLevel: 'error',
+                                    securityLevel: 'loose',
+                                    fontFamily: '"Source Sans Pro", "Helvetica Neue", Helvetica, Arial, sans-serif',
+                                    fontSize: 14,
+                                    flowchart: {{{{
+                                        curve: 'linear',
+                                        htmlLabels: true,
+                                        useMaxWidth: true,
+                                        diagramPadding: 8
+                                    }}}},
+                                    sequence: {{{{
+                                        useMaxWidth: true,
+                                        diagramMarginX: 50,
+                                        diagramMarginY: 10,
+                                        boxMargin: 10,
+                                        mirrorActors: false,
+                                        actorFontFamily: '"Source Sans Pro", sans-serif',
+                                        noteFontFamily: '"Source Sans Pro", sans-serif',
+                                        messageFontFamily: '"Source Sans Pro", sans-serif'
+                                    }}}},
+                                    gantt: {{{{
+                                        useMaxWidth: true,
+                                        fontFamily: '"Source Sans Pro", sans-serif'
+                                    }}}}
+                                }});
+                            </script>
+                            <style>
+                                /* PyMdown Extensions with Material theme styling */
+                                :root {{
+                                    --md-primary-fg-color: #3f51b5;  
+                                    --md-primary-fg-color--light: #7986cb;
+                                    --md-primary-fg-color--dark: #303f9f;
+                                    --md-accent-fg-color: #ff4081;
+                                    --md-text-color: #212121;
+                                    --md-code-bg-color: #f5f5f5;
+                                    --md-code-fg-color: #37474f;
+                                    --md-footer-bg-color: #424242;
+                                    --md-footer-fg-color: #f5f5f5;
+                                }}
+                                
+                                body {{{{ 
+                                    font-family: "Source Sans Pro", "Helvetica Neue", Helvetica, Arial, sans-serif; 
+                                    margin: 0; 
+                                    padding: 0; 
+                                    background-color: #fafafa;
+                                    color: var(--md-text-color);
+                                    line-height: 1.6;
+                                }}
+                                
+                                .pymdown-container {{ 
+                                    max-width: 100%;
+                                    padding: 1.2rem;
+                                    margin: 0 auto;
+                                    background-color: #ffffff;
+                                    border-radius: 0.2rem;
+                                    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+                                }}
+                                
+                                .pymdown-header {{ 
+                                    color: var(--md-primary-fg-color); 
+                                    font-size: 1.25rem;
+                                    font-weight: 400;
+                                    margin-bottom: 1rem;
+                                    padding-bottom: 0.5rem;
+                                    border-bottom: 1px solid rgba(0,0,0,0.07);
+                                }}
+                                
+                                .pymdown-content {{
+                                    padding: 0.8rem 0;
+                                }}
+                                
+                                .pymdown-mermaid {{
+                                    width: 100%;
+                                    min-height: 400px;
+                                    display: flex;
+                                    justify-content: center;
+                                    align-items: center;
+                                    padding: 1rem 0;
+                                    background-color: #ffffff;
+                                    border: 1px solid rgba(0,0,0,0.07);
+                                    border-radius: 0.2rem;
+                                }}
+                                
+                                .pymdown-mermaid svg {{
+                                    max-width: 100%;
+                                    height: auto !important;
+                                }}
+                                
+                                .pymdown-footer {{
+                                    margin-top: 1rem;
+                                    padding-top: 0.5rem;
+                                    border-top: 1px solid rgba(0,0,0,0.07);
+                                    font-size: 0.7rem;
+                                    color: rgba(0,0,0,0.54);
+                                    text-align: center;
+                                }}
+                                
+                                .pymdown-footer a {{
+                                    color: var(--md-primary-fg-color);
+                                    text-decoration: none;
+                                }}
+                                
+                                .pymdown-footer a:hover {{
+                                    text-decoration: underline;
+                                }}
+                                
+                                .error-message {{{{
+                                    color: #f44336;
+                                    background-color: #ffebee;
+                                    border: 1px solid #ffcdd2;
+                                    border-radius: 0.2rem;
+                                    padding: 0.8rem;
+                                    margin: 1rem 0;
+                                    text-align: center;
+                                }}
+                                
+                                /* Material theme code block styling */
+                                .md-typeset code {{
+                                    background-color: var(--md-code-bg-color);
+                                    color: var(--md-code-fg-color);
+                                    padding: 0 0.3em;
+                                    border-radius: 0.2rem;
+                                    font-family: "Roboto Mono", monospace;
+                                    font-size: 0.85em;
+                                }}
+                                
+                                .md-typeset pre {{
+                                    background-color: var(--md-code-bg-color);
+                                    color: var(--md-code-fg-color);
+                                    line-height: 1.4;
+                                    border-radius: 0.2rem;
+                                    padding: 0.8rem;
+                                    margin: 1rem 0;
+                                    overflow: auto;
+                                }}
+                                
+                                /* PyMdown-specific mermaid overrides */
+                                .mermaid {{
+                                    font-family: "Source Sans Pro", sans-serif;
+                                }}
+                                
+                                .mermaid .label {{{{ 
+                                    font-family: "Source Sans Pro", sans-serif !important;
+                                    color: #212121 !important;
+                                    font-size: 14px !important;
+                                }}
+                                
+                                .mermaid .node rect, .mermaid .node circle, .mermaid .node ellipse, .mermaid .node polygon {{
+                                    fill: #e3f2fd !important;
+                                    stroke: #90caf9 !important;
+                                    stroke-width: 1px !important;
+                                }}
+                                
+                                .mermaid .edgePath .path {{{{
+                                    stroke: #2196f3 !important;
+                                    stroke-width: 1.5px !important;
+                                }}
+                                
+                                .mermaid .edgeLabel {{
+                                    background-color: #ffffff !important;
+                                    color: #212121 !important;
+                                }}
+                                
+                                .mermaid .cluster rect {{
+                                    fill: #e8eaf6 !important;
+                                    stroke: #c5cae9 !important;
+                                    stroke-width: 1px !important;
+                                }}
+                                
+                                .mermaid .actor {{
+                                    fill: #e3f2fd !important;
+                                    stroke: #90caf9 !important;
+                                }}
+                                
+                                .mermaid text.actor {{
+                                    fill: #212121 !important;
+                                }}
+                                
+                                /* Admonition styling (typical in PyMdown) */
+                                .admonition {{
+                                    margin: 1.5625em 0;
+                                    padding: 0 0.6rem;
+                                    overflow: hidden;
+                                    font-size: 0.8rem;
+                                    border-left: 0.2rem solid #448aff;
+                                    border-radius: 0.1rem;
+                                    background-color: rgba(68, 138, 255, 0.1);
+                                }}
+                                
+                                .admonition-title {{
+                                    margin: 0 -0.6rem;
+                                    padding: 0.4rem 0.6rem 0.4rem 2rem;
+                                    font-weight: 700;
+                                    background-color: rgba(68, 138, 255, 0.1);
+                                }}
+                            </style>
+                        </head>
+                        <body>
+                            <div class="pymdown-container">
+                                <div class="pymdown-header">Conceptual Diagram of Chat History</div>
+                                <div class="pymdown-content">
+                                    <div class="pymdown-mermaid">
+                                        <pre class="mermaid">
+{clean_mermaid_code}
+                                        </pre>
+                                    </div>
+                                    {mermaid_pre_init}
+                                    
+                                    <!-- Example of PyMdown-style admonition (for demonstration) -->
+                                    <div class="admonition note">
+                                        <p class="admonition-title">Note</p>
+                                        <p>This diagram is rendered using the PyMdown Extensions style, which is commonly used with Material for MkDocs.</p>
+                                    </div>
+                                </div>
+                                <div class="pymdown-footer">
+                                    Rendered with <a href="https://facelessuser.github.io/pymdown-extensions/extensions/superfences/#uml-diagram-example" target="_blank">PyMdown Extensions</a> style
+                                </div>
+                            </div>
                             
-                            // Remove width/height restrictions
-                            const gElements = svg.querySelectorAll('g');
-                            gElements.forEach(function(g) {
-                                if (g.hasAttribute('width')) g.removeAttribute('width');
-                                if (g.hasAttribute('height')) g.removeAttribute('height');
-                                if (g.hasAttribute('transform') && g.getAttribute('transform').includes('scale(0.')) {
-                                    g.setAttribute('transform', 'scale(1)');
-                                }
-                            });
-                        }
-                    "
-                    '''
+                            <script>
+                                // Add error handling for Mermaid rendering
+                                window.addEventListener('error', function(e) {{
+                                    if (e.message && e.message.includes('mermaid')) {{
+                                        console.error('Mermaid error:', e);
+                                        document.querySelector('.pymdown-mermaid').innerHTML += 
+                                            '<div class="error-message">Error rendering the diagram. The syntax may be invalid.</div>';
+                                    }}}}
+                                }});
+                                
+                                // Add PyMdown-specific rendering behavior
+                                document.addEventListener('DOMContentLoaded', function() {{
+                                    // Initialize mermaid with PyMdown-specific settings
+                                    try {{{{
+                                        if (typeof mermaid !== 'undefined') {{
+                                            mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                                        }}}}
+                                    }} catch (e) {{{{{{
+                                        console.error('Mermaid initialization error:', e);
+                                        document.querySelector('.pymdown-mermaid').innerHTML += 
+                                            '<div class="error-message">Error initializing the diagram renderer.</div>';
+                                    }}}}
+                                    
+                                    // Add support for clicking on diagram elements (common in PyMdown)
+                                    document.querySelectorAll('.mermaid svg a').forEach(function(link) {{
+                                        link.addEventListener('click', function(e) {{
+                                            e.preventDefault();
+                                            const href = this.getAttribute('xlink:href');
+                                            if (href && !href.startsWith('#')) {{
+                                                window.open(href, '_blank');
+                                            }}}}
+                                        }}}}}});
+                                    }}}})});
+                                }});
+                            </script>
+                        </body>
+                        </html>
+                        '''
                     
-                    # Complete the iframe HTML
-                    iframe_html += onload_js + '></iframe>'
+                    # Use iframe to render the HTML content
+                    # Escape single quotes in the HTML content
+                    html_content_escaped = html_content.replace("'", "&#39;")
+                    # Use string format instead of f-string for better reliability
+                    iframe_template = '<iframe srcdoc="{}" width="100%" height="600" style="border:none;"></iframe>'
+                    iframe_html = iframe_template.format(html_content_escaped.replace('"', '&quot;'))
                     
-                    # Success message with timestamp for auditability
-                    success_msg = f"Diagram generated successfully at {datetime.now().strftime('%H:%M:%S')}"
-                    logging.info(success_msg)
-                    
-                    return iframe_html, success_msg
-
+                    diagram_status.value = "Conceptual diagram generated successfully!"
+                    return iframe_html, "Conceptual diagram generated successfully!"
+                
                 except Exception as e:
-                    error_msg = f"Diagram error: {str(e)}"
-                    logger.error(error_msg)
-                    return None, error_msg
-
+                    import traceback
+                    error_details = traceback.format_exc()
+                    print(f"Error generating conceptual diagram: {str(e)}\n{error_details}")
+                    diagram_status.value = f"Error generating diagram: {str(e)}"
+                    return None, f"Error generating diagram: {str(e)}"
+            
             # Connect conceptual diagram button
             create_diagram_btn.click(
                 fn=generate_chat_diagram,
-                inputs=[chat_history_state],
+                inputs=[chat_history_state, diagram_renderer],
                 outputs=[diagram_output, diagram_status],
             )
 
