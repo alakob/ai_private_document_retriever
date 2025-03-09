@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Architecture Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            margin: 30px 0;
+        }
+        .controls {
+            margin: 20px 0;
+            text-align: center;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .instructions {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Private Document Retriever - Architecture Diagram</h1>
+        
+        <div class="mermaid">
+graph TD
+    A[Configuration Layer] --> B[Document Processor]
+    A --> C[Vector Search]
+    A --> D[Chat Interface]
+    
+    subgraph Configuration Layer
+        E[config.py] --> |Provides configs for| F[ProcessorConfig]
+        E --> |Provides configs for| G[PostgresConfig]
+        E --> |Provides configs for| H[EmbeddingConfig]
+        E --> |Provides configs for| I[ChunkingConfig]
+    end
+    
+    subgraph Core Processing
+        B --> |Uses| J[Document Loading]
+        B --> |Uses| K[Text Chunking]
+        B --> |Uses| L[Embedding Generation]
+        B --> |Uses| M[Vector Database]
+    end
+    
+    subgraph Database Layer
+        N[models.py] --> |Defines| O[DocumentModel]
+        N --> |Defines| P[DocumentChunk]
+        M --> |Uses| O
+        M --> |Uses| P
+    end
+        </div>
+
+        <div class="controls">
+            <button id="saveAsPng">Save as PNG</button>
+            <button id="saveAsSvg">Save as SVG</button>
+        </div>
+
+        <div class="instructions">
+            <h3>Instructions to save the diagram:</h3>
+            <ol>
+                <li>Click one of the save buttons above, or</li>
+                <li>Right-click on the diagram and select "Save image as..." or</li>
+                <li>Use browser screenshot functionality (Cmd+Shift+4 on Mac or Win+Shift+S on Windows)</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+        
+        // Function to download SVG
+        document.getElementById('saveAsSvg').addEventListener('click', function() {
+            const svgElement = document.querySelector('.mermaid svg');
+            if (!svgElement) {
+                alert('SVG element not found. Please wait for the diagram to render.');
+                return;
+            }
+            
+            const svgData = new XMLSerializer().serializeToString(svgElement);
+            const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+            const svgUrl = URL.createObjectURL(svgBlob);
+            
+            const downloadLink = document.createElement('a');
+            downloadLink.href = svgUrl;
+            downloadLink.download = 'project_architecture.svg';
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        });
+
+        // Function to download PNG
+        document.getElementById('saveAsPng').addEventListener('click', function() {
+            const svgElement = document.querySelector('.mermaid svg');
+            if (!svgElement) {
+                alert('SVG element not found. Please wait for the diagram to render.');
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            const svgRect = svgElement.getBoundingClientRect();
+            
+            // Set canvas size to match SVG dimensions
+            canvas.width = svgRect.width;
+            canvas.height = svgRect.height;
+            
+            const ctx = canvas.getContext('2d');
+            const svgData = new XMLSerializer().serializeToString(svgElement);
+            const img = new Image();
+            
+            const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+            const svgUrl = URL.createObjectURL(svgBlob);
+            
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(svgUrl);
+                
+                const pngUrl = canvas.toDataURL('image/png');
+                const downloadLink = document.createElement('a');
+                downloadLink.href = pngUrl;
+                downloadLink.download = 'project_architecture.png';
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+            };
+            
+            img.src = svgUrl;
+        });
+    </script>
+</body>
+</html>

@@ -12,6 +12,7 @@ charset-normalizer==3.4.1
 click==8.1.8
 dataclasses-json==0.6.7
 distro==1.9.0
+docling==0.7.5
 docx2txt==0.8
 exceptiongroup==1.2.2
 fastapi==0.115.8
@@ -37,6 +38,7 @@ langchain==0.3.18
 langchain-community==0.3.17
 langchain-core==0.3.35
 langchain-openai==0.3.5
+mistralai==0.0.9
 langchain-text-splitters==0.3.6
 langsmith==0.3.8
 lxml==5.3.1
@@ -47,6 +49,7 @@ mdurl==0.1.2
 multidict==6.1.0
 mypy-extensions==1.0.0
 narwhals==1.26.0
+networkx==3.3
 numpy==1.26.4
 openai==1.63.0
 orjson==3.10.15
@@ -70,6 +73,7 @@ python-multipart==0.0.20
 python-pptx==1.0.2
 pytz==2025.1
 PyYAML==6.0.2
+redis==5.0.3
 regex==2024.11.6
 requests==2.32.3
 requests-toolbelt==1.0.0

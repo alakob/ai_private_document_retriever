@@ -80,6 +80,7 @@ class IndexConfig:
 @dataclass
 class ProcessorConfig:
     """Configuration for document processing."""
+    # Basic configuration
     chunk_size: int = int(os.getenv('CHUNK_SIZE', 1000))
     chunk_overlap: int = int(os.getenv('CHUNK_OVERLAP', 200))
     vector_store_type: Literal["postgres", "faiss", "chroma"] = "postgres"
@@ -89,12 +90,26 @@ class ProcessorConfig:
     max_workers: int = 4
     db_pool_size: int = 5
     openai_api_key: str = os.getenv('OPENAI_API_KEY')
+    
+    # Sub-configurations
     rate_limit_config: RateLimitConfig = RateLimitConfig()
     resource_config: ResourceConfig = ResourceConfig()
     embedding_config: EmbeddingConfig = EmbeddingConfig()
     chunking_config: ChunkingConfig = None
     file_processing_config: FileProcessingConfig = FileProcessingConfig()
     index_config: IndexConfig = IndexConfig()
+    
+    # Docling configuration
+    use_docling: bool = os.getenv('USE_DOCLING', '').lower() in ('true', '1', 'yes')
+    docling_artifacts_path: Optional[str] = os.getenv('DOCLING_ARTIFACTS_PATH')
+    docling_enable_remote: bool = os.getenv('DOCLING_ENABLE_REMOTE', '').lower() in ('true', '1', 'yes')
+    docling_use_cache: bool = os.getenv('DOCLING_USE_CACHE', 'true').lower() in ('true', '1', 'yes')
+    
+    # Mistral OCR configuration
+    use_mistral: bool = os.getenv('USE_MISTRAL', '').lower() in ('true', '1', 'yes')
+    mistral_api_key: Optional[str] = os.getenv('MISTRAL_API_KEY')
+    mistral_ocr_model: str = os.getenv('MISTRAL_OCR_MODEL', 'mistral-ocr-latest')
+    mistral_include_images: bool = os.getenv('MISTRAL_INCLUDE_IMAGES', '').lower() in ('true', '1', 'yes')
 
     def __post_init__(self):
         if not self.openai_api_key:
@@ -124,7 +139,7 @@ class ChatConfig:
         if self.example_questions is None:
             self.example_questions = [
                 "What are the main topics covered in the documents?",
-                "Can you summarize the key points about machine learning?",
+                "Can you summarize the key points in the documents?",
                 "What are the best practices mentioned in the documents?"
             ]
 
@@ -142,6 +157,24 @@ class DatabaseConfig:
         return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
 
 @dataclass
+class RedisConfig:
+    """Configuration for Redis connection."""
+    host: str = os.getenv('REDIS_HOST', 'localhost')
+    port: int = int(os.getenv('REDIS_PORT', 6379))
+    db: int = int(os.getenv('REDIS_DB', 0))
+    password: str = os.getenv('REDIS_PASSWORD', '')
+    timeout: int = 5
+    enabled: bool = os.getenv('USE_REDIS_CACHE', '').lower() in ('true', '1', 'yes')
+    use_redis_cache: bool = os.getenv('USE_REDIS_CACHE', '').lower() in ('true', '1', 'yes')  # Added for compatibility with embedding service
+    cache_expiry: int = 24 * 60 * 60  # 24 hours in seconds
+    
+    @property
+    def connection_url(self) -> str:
+        if self.password:
+            return f"redis://:{self.password}@{self.host}:{self.port}/{self.db}"
+        return f"redis://{self.host}:{self.port}/{self.db}"
+
+@dataclass
 class VectorSearchConfig:
     """Configuration for vector similarity search."""
     top_k: int = 5
@@ -151,6 +184,8 @@ class VectorSearchConfig:
     max_retries: int = 3
     base_delay: float = 1.0
     embedding_model: str = "text-embedding-ada-002"
+    cache_expiry: int = 24 * 60 * 60  # 24 hours in seconds
+    use_redis_cache: bool = False     # Whether to use Redis for caching (if available)
     
     # Add a method to create a connection string from database config
     @classmethod
@@ -184,6 +219,7 @@ index_config = IndexConfig()
 
 chat_config = ChatConfig()
 db_config = DatabaseConfig()
+redis_config = RedisConfig()
 processor_config = ProcessorConfig(
     chunk_size=int(os.getenv('CHUNK_SIZE', 1000)),
     chunk_overlap=int(os.getenv('CHUNK_OVERLAP', 200)),
@@ -195,5 +231,6 @@ processor_config = ProcessorConfig(
     index_config=index_config
 )
 
-# Create instances of configs for easy import
-vector_search_config = VectorSearchConfig() 
+# Configure vector search with Redis if enabled
+use_redis_cache = redis_config.enabled
+vector_search_config = VectorSearchConfig(use_redis_cache=use_redis_cache)
