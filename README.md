@@ -57,6 +57,7 @@ ai_private_document_retriever/
    - Sample `.env` file:
      ```
      OPENAI_API_KEY=your_openai_api_key
+     MISTRAL_API_KEY=your_mistral_api_key
      POSTGRES_USER=postgres
      POSTGRES_PASSWORD=yourpassword
      POSTGRES_HOST=localhost
@@ -141,6 +142,7 @@ The system includes a powerful feature to generate conceptual diagrams from your
 The system uses environment variables for configuration, which can be set in a `.env` file:
 
 - `OPENAI_API_KEY`: Required for embedding generation and LLM responses
+- `MISTRAL_API_KEY`: Required for OCR capabilities when using Mistral API
 - `MODEL`: LLM model to use (default: gpt-4o-mini)
 - `CHUNK_SIZE`: Size of document chunks (default: 1000)
 - `CHUNK_OVERLAP`: Overlap between chunks (default: 200)
