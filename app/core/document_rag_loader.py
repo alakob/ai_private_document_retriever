@@ -1,6 +1,7 @@
 import os
 import logging
-from typing import List, Optional, Union, Literal, Generator, Dict
+import base64
+from typing import List, Optional, Union, Literal, Generator, Dict, Any, Tuple, Callable
 from pathlib import Path
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader, TextLoader, Docx2txtLoader, UnstructuredPowerPointLoader, UnstructuredPDFLoader
 from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
@@ -8,6 +9,7 @@ from langchain.schema import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS, Chroma, PGVector
 from dataclasses import dataclass
+import importlib.util
 import numpy as np
 from contextlib import contextmanager
 import sqlalchemy
@@ -47,8 +49,8 @@ import argparse
 from sqlalchemy.schema import DropSchema
 
 from dotenv import load_dotenv
-from models import Base, DocumentModel, DocumentChunk
-from config import (
+from app.models import Base, DocumentModel, DocumentChunk
+from app.config import (
     PostgresConfig, 
     ProcessorConfig,
     RateLimitConfig,
@@ -119,6 +121,274 @@ class EmbeddingError(DocumentProcessingError):
 class DatabaseError(DocumentProcessingError):
     """Raised when database operations fail."""
     pass
+
+class DoclingNotInstalledError(ImportError):
+    """Raised when docling is not installed."""
+    pass
+
+class MistralNotInstalledError(ImportError):
+    """Raised when mistral client is not installed."""
+    pass
+
+# Add document loader helper functions
+def is_docling_installed() -> bool:
+    """Check if docling is installed."""
+    return importlib.util.find_spec("docling") is not None
+
+def is_mistral_installed() -> bool:
+    """Check if mistral client is installed."""
+    return importlib.util.find_spec("mistralai") is not None
+
+class DoclingLoader:
+    """Document loader using docling for enhanced document conversion.
+    
+    This loader uses docling to convert documents to structured text with better
+    preservation of tables, lists, and other document elements.
+    
+    Attributes:
+        artifacts_path: Optional path to pre-downloaded docling models
+        enable_remote_services: Whether to allow docling to use remote services
+        use_cache: Whether to use cached conversions
+    """
+    
+    def __init__(self, 
+                artifacts_path: Optional[str] = None,
+                enable_remote_services: bool = False,
+                use_cache: bool = True):
+        """Initialize the DoclingLoader.
+        
+        Args:
+            artifacts_path: Path to pre-downloaded models (optional)
+            enable_remote_services: Whether to allow external API calls
+            use_cache: Whether to cache conversion results
+        
+        Raises:
+            DoclingNotInstalledError: If docling is not installed
+        """
+        if not is_docling_installed():
+            raise DoclingNotInstalledError(
+                "Docling is not installed. Please install it with: "
+                "pip install docling"
+            )
+            
+        self.artifacts_path = artifacts_path
+        self.enable_remote_services = enable_remote_services
+        self.use_cache = use_cache
+        self._converter = None
+    
+    @property
+    def converter(self):
+        """Lazy initialization of the DocumentConverter."""
+        if self._converter is None:
+            try:
+                from docling.document_converter import DocumentConverter
+                from docling.datamodel.base_models import InputFormat
+                from docling.datamodel.pipeline_options import PdfPipelineOptions
+                from docling.document_converter import PdfFormatOption
+                
+                # Configure pipeline options
+                pipeline_options = {}
+                if self.artifacts_path:
+                    pipeline_options["artifacts_path"] = self.artifacts_path
+                if self.enable_remote_services:
+                    pipeline_options["enable_remote_services"] = True
+                    
+                pdf_pipeline_options = PdfPipelineOptions(**pipeline_options)
+                
+                # Create converter with specific format options
+                format_options = {
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_pipeline_options)
+                }
+                
+                self._converter = DocumentConverter(
+                    format_options=format_options,
+                    use_cache=self.use_cache
+                )
+                
+            except ImportError as e:
+                raise DoclingNotInstalledError(
+                    f"Error importing docling components: {e}"
+                )
+        return self._converter
+    
+    def load(self, file_path: str) -> List[Document]:
+        """Load a document using docling.
+        
+        Args:
+            file_path: Path to the document file
+            
+        Returns:
+            List of LangChain Document objects
+            
+        Raises:
+            FileLoadError: If the document cannot be loaded
+        """
+        try:
+            logger.info(f"Loading document with docling: {file_path}")
+            # Convert the document
+            result = self.converter.convert(file_path)
+            
+            # Extract document content as markdown
+            content = result.document.export_to_markdown()
+            
+            # Extract metadata
+            metadata = {
+                "source": file_path,
+                "title": result.document.title if hasattr(result.document, "title") else Path(file_path).stem,
+                "doc_type": Path(file_path).suffix.lower().lstrip("."),
+                "processor": "docling",
+                "page_count": len(result.document.blocks) if hasattr(result.document, "blocks") else 1
+            }
+            
+            # Create a LangChain Document
+            document = Document(page_content=content, metadata=metadata)
+            
+            return [document]
+            
+        except Exception as e:
+            error_msg = f"Failed to load document with docling: {str(e)}"
+            logger.error(error_msg)
+            raise FileLoadError(error_msg) from e
+
+class MistralOCRLoader:
+    """Document loader using Mistral AI's OCR API for enhanced document conversion.
+    
+    This loader leverages Mistral AI's OCR capabilities to extract text from documents
+    while preserving structure, hierarchy, and formatting elements like headers, tables, and lists.
+    
+    Attributes:
+        api_key: Mistral API key for authentication
+        include_image_base64: Whether to include base64-encoded images in the response
+        model: Mistral OCR model name to use
+    """
+    
+    def __init__(self,
+                api_key: str,
+                model: str = "mistral-ocr-latest",
+                include_image_base64: bool = False):
+        """Initialize the MistralOCRLoader.
+        
+        Args:
+            api_key: Mistral API key
+            model: OCR model to use, defaults to "mistral-ocr-latest"
+            include_image_base64: Whether to include images in response
+            
+        Raises:
+            MistralNotInstalledError: If mistral package is not installed
+        """
+        if not is_mistral_installed():
+            raise MistralNotInstalledError(
+                "Mistral package is not installed. Please install it with: "
+                "pip install mistralai"
+            )
+            
+        self.api_key = api_key
+        self.model = model
+        self.include_image_base64 = include_image_base64
+        self._client = None
+        
+    @property
+    def client(self):
+        """Lazy initialization of the Mistral client."""
+        if self._client is None:
+            from mistralai import Mistral
+            self._client = Mistral(api_key=self.api_key)
+        return self._client
+    
+    async def load(self, file_path: str) -> List[Document]:
+        """Load a document using Mistral OCR API.
+        
+        Args:
+            file_path: Path to the document file
+            
+        Returns:
+            List of LangChain Document objects
+            
+        Raises:
+            FileLoadError: If the document cannot be processed
+        """
+        try:
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File not found: {file_path}")
+                
+            # Get file name for metadata
+            file_name = os.path.basename(file_path)
+            
+            # Process file based on whether it's local or a URL
+            ocr_response = await self._process_document(file_path)
+            
+            # Convert OCR response to Document objects
+            documents = self._convert_to_documents(ocr_response, file_name)
+            
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Error loading document with Mistral OCR: {str(e)}")
+            raise FileLoadError(f"Failed to load {file_path} with Mistral OCR: {str(e)}")
+    
+    async def _process_document(self, file_path: str):
+        """Process a document with Mistral OCR API."""
+        # We need to run this in a thread pool since the Mistral client is synchronous
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._process_document_sync, file_path)
+    
+    def _process_document_sync(self, file_path: str):
+        """Synchronous method to process a document with OCR."""
+        # Determine if we're processing a local file or URL
+        if file_path.startswith(('http://', 'https://')):
+            # For URLs
+            return self.client.ocr.process(
+                model=self.model,
+                document={
+                    "type": "document_url",
+                    "document_url": file_path
+                },
+                include_image_base64=self.include_image_base64
+            )
+        else:
+            # For local files, we need to open and read the file
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+                
+            return self.client.ocr.process(
+                model=self.model,
+                document={
+                    "type": "document_base64",
+                    "document_base64": base64.b64encode(file_content).decode("utf-8"),
+                    "filename": os.path.basename(file_path)
+                },
+                include_image_base64=self.include_image_base64
+            )
+    
+    def _convert_to_documents(self, ocr_response, file_name: str) -> List[Document]:
+        """Convert OCR response to LangChain Document objects."""
+        documents = []
+        
+        # Extract page content from the OCR response
+        if hasattr(ocr_response, 'pages') and ocr_response.pages:
+            for i, page in enumerate(ocr_response.pages):
+                # Create metadata
+                metadata = {
+                    "source": file_name,
+                    "page": i + 1,  # 1-indexed page numbers
+                    "total_pages": len(ocr_response.pages),
+                    "file_path": file_name
+                }
+                
+                # Get page content (either markdown or text)
+                if hasattr(page, 'markdown') and page.markdown:
+                    content = page.markdown
+                elif hasattr(page, 'text') and page.text:
+                    content = page.text
+                else:
+                    # Skip pages with no content
+                    continue
+                    
+                # Create Document object
+                doc = Document(page_content=content, metadata=metadata)
+                documents.append(doc)
+        
+        return documents
 
 # Update utility functions with better error handling
 async def create_vector_index(conn) -> None:
@@ -603,10 +873,10 @@ class DocumentProcessor:
             chunk_overlap=chunking_config.chunk_overlap
         )
         
-        self.embeddings = OpenAIEmbeddings(
-            openai_api_key=config.openai_api_key,
-            model=embedding_config.model_name
-        )
+        # Use the cached embedding service instead of directly instantiating OpenAIEmbeddings
+        from app.services.embedding_service import get_embedding_service
+        # We'll retrieve the actual service instance when needed asynchronously
+        self.embedding_service = None
         
         self.vector_store = None
         
@@ -640,6 +910,17 @@ class DocumentProcessor:
         # Add thread pool for I/O operations
         self.thread_pool = ThreadPoolExecutor(max_workers=config.max_workers)
 
+        # Set up document loaders based on configuration
+        self._setup_document_loaders()
+
+        # Add new components
+        self.rate_limiter = EnhancedRateLimiter(config.rate_limit_config)
+        self.resource_monitor = ResourceMonitor(ResourceConfig())
+        self.adaptive_batcher = AdaptiveBatcher()
+        
+    def _setup_document_loaders(self):
+        """Set up document loaders based on configuration"""
+        # Default loaders using LangChain
         self.file_loaders = {
             '.pdf': lambda path: PyPDFLoader(path).load(),
             '.txt': lambda path: TextLoader(path).load(),
@@ -648,11 +929,58 @@ class DocumentProcessor:
             '.ppt': lambda path: UnstructuredPowerPointLoader(path).load(),
             '.pptx': lambda path: UnstructuredPowerPointLoader(path).load(),
         }
-
-        # Add new components
-        self.rate_limiter = EnhancedRateLimiter(config.rate_limit_config)
-        self.resource_monitor = ResourceMonitor(ResourceConfig())
-        self.adaptive_batcher = AdaptiveBatcher()
+        
+        # Try to set up docling if requested and available
+        if getattr(self.config, 'use_docling', False):
+            try:
+                # Check if docling is installed
+                if is_docling_installed():
+                    # Create docling loader instance with configuration
+                    docling_loader = DoclingLoader(
+                        artifacts_path=getattr(self.config, 'docling_artifacts_path', None),
+                        enable_remote_services=getattr(self.config, 'docling_enable_remote', False),
+                        use_cache=getattr(self.config, 'docling_use_cache', True)
+                    )
+                    
+                    # Replace existing loaders with docling for supported formats
+                    supported_formats = ['.pdf', '.docx', '.doc', '.ppt', '.pptx']
+                    for fmt in supported_formats:
+                        self.file_loaders[fmt] = lambda path, loader=docling_loader: loader.load(path)
+                    
+                    logger.info("Docling document loader configured successfully")
+                else:
+                    logger.warning("Docling requested but not installed. Using default loaders.")
+            except Exception as e:
+                logger.warning(f"Failed to initialize docling loader: {str(e)}. Using default loaders.")
+        
+        # Try to set up Mistral OCR loader if requested and available
+        elif getattr(self.config, 'use_mistral', False):
+            try:
+                # Check if Mistral API key is provided
+                mistral_api_key = getattr(self.config, 'mistral_api_key', None)
+                if not mistral_api_key:
+                    logger.warning("Mistral OCR requested but no API key provided. Using default loaders.")
+                    return
+                
+                # Check if mistral client is installed
+                if is_mistral_installed():
+                    # Create Mistral OCR loader instance with configuration
+                    mistral_loader = MistralOCRLoader(
+                        api_key=mistral_api_key,
+                        model=getattr(self.config, 'mistral_ocr_model', 'mistral-ocr-latest'),
+                        include_image_base64=getattr(self.config, 'mistral_include_images', False)
+                    )
+                    
+                    # Replace existing loaders with Mistral OCR for supported formats
+                    supported_formats = ['.pdf', '.docx', '.doc', '.ppt', '.pptx', '.jpg', '.jpeg', '.png']
+                    for fmt in supported_formats:
+                        self.file_loaders[fmt] = lambda path, loader=mistral_loader: loader.load(path)
+                    
+                    logger.info("Mistral OCR document loader configured successfully")
+                else:
+                    logger.warning("Mistral OCR requested but mistralai package not installed. Using default loaders.")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Mistral OCR loader: {str(e)}. Using default loaders.")
 
     async def initialize_database(self, drop_all: bool = False) -> None:
         """
@@ -799,53 +1127,29 @@ class DocumentProcessor:
             logger.error(f"Error in text splitting: {str(e)}")
             return []
 
-    async def _get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """Get embeddings with improved rate limiting and batching."""
+    async def _get_embeddings_batch(self, texts: List[str], no_cache: bool = False) -> List[List[float]]:
+        """Get embeddings with improved rate limiting and batching, using cache where available."""
         if not texts:
             return []
         
-        # Split into smaller batches
-        batch_size = self.config.rate_limit_config.batch_size
-        batches = [
-            texts[i:i + batch_size] 
-            for i in range(0, len(texts), batch_size)
-        ]
+        # Initialize embedding service if not done yet
+        if self.embedding_service is None:
+            from app.services.embedding_service import get_embedding_service
+            self.embedding_service = await get_embedding_service()
+            logger.info("Initialized cached embedding service for document processing")
         
         results = []
-        for attempt in range(self.config.rate_limit_config.max_retries):
-            try:
-                for batch in batches:
-                    try:
-                        # Wait for rate limit
-                        await self.rate_limiter.wait_if_needed()
-                        
-                        # Get embeddings for batch
-                        batch_embeddings = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            lambda: self.embeddings.embed_documents(batch)
-                        )
-                        
-                        results.extend(batch_embeddings)
-                        
-                    finally:
-                        # Always release the concurrent request slot
-                        await self.rate_limiter.release()
-                        
-                return results
-                
-            except Exception as e:
-                if attempt == self.config.rate_limit_config.max_retries - 1:
-                    raise EmbeddingError(
-                        f"Failed to get embeddings after "
-                        f"{self.config.rate_limit_config.max_retries} attempts"
-                    ) from e
-                    
-                delay = await self.rate_limiter.backoff_delay(attempt)
-                logger.warning(
-                    f"Embedding attempt {attempt + 1} failed, "
-                    f"retrying in {delay:.2f}s: {str(e)}"
-                )
-                await asyncio.sleep(delay)
+        try:
+            # Get embeddings with caching through the embedding service
+            logger.info(f"Generating embeddings for {len(texts)} text chunks (with caching)")
+            results = await self.embedding_service.get_embeddings_batch(texts, no_cache)
+            logger.info(f"Successfully generated embeddings for {len(results)} text chunks")
+            return results
+            
+        except Exception as e:
+            # We'll still use the retry and backoff strategy
+            logger.warning(f"Error generating embeddings: {str(e)}")
+            raise EmbeddingError(f"Failed to get embeddings: {str(e)}") from e
 
     async def _store_chunks_batch(
         self, 
@@ -1394,12 +1698,14 @@ def process_single_document(file_path: str, config: ProcessorConfig) -> Optional
         return None
 
 # Update the async_main function to handle command line arguments
-async def async_main():
-    """Main async function to run the document processor."""
-    # Add argument parsing
-    parser = argparse.ArgumentParser(description='Document Processing System')
-    parser.add_argument('--reset-db', action='store_true', help='Reset the database before processing')
-    args = parser.parse_args()
+async def async_main(directory: str = None, reset_db: bool = False, use_docling: bool = False, use_mistral: bool = False):
+    """Main async function to run the document processor.
+    
+    Args:
+        directory: Directory containing documents to process. If provided, will process all documents in this directory
+        reset_db: If True, reset the database before processing
+        use_docling: If True, use Docling for enhanced document conversion
+    """
 
     try:
         # Create a rich console for better formatting
@@ -1416,6 +1722,13 @@ async def async_main():
         console.print("[bold]System Configuration:[/bold]")
         console.print(f"  • [cyan]Vector Store:[/cyan] {processor_config.vector_store_type}")
         console.print(f"  • [cyan]Embedding Model:[/cyan] {embedding_config.model_name}")
+        # Determine document loader type for display
+        loader_type = 'Default (LangChain)'
+        if use_docling:
+            loader_type = 'Docling (Enhanced)'
+        elif use_mistral:
+            loader_type = 'Mistral OCR API'
+        console.print(f"  • [cyan]Document Loader:[/cyan] {loader_type}")
         console.print(f"  • [cyan]Chunk Size:[/cyan] {chunking_config.chunk_size}")
         console.print(f"  • [cyan]Chunk Overlap:[/cyan] {chunking_config.chunk_overlap}")
         console.print(f"  • [cyan]Workers:[/cyan] {processor_config.max_workers}")
@@ -1439,7 +1752,17 @@ async def async_main():
             postgres_config=postgres_config,
             batch_size=50,
             max_workers=processor_config.max_workers,
-            openai_api_key=openai_api_key
+            openai_api_key=openai_api_key,
+            # Docling configuration
+            use_docling=use_docling,
+            docling_artifacts_path=os.getenv('DOCLING_ARTIFACTS_PATH'),
+            docling_enable_remote=os.getenv('DOCLING_ENABLE_REMOTE', '').lower() in ('true', '1', 'yes'),
+            docling_use_cache=os.getenv('DOCLING_USE_CACHE', 'true').lower() in ('true', '1', 'yes'),
+            # Mistral OCR configuration
+            use_mistral=use_mistral,
+            mistral_api_key=os.getenv('MISTRAL_API_KEY'),
+            mistral_ocr_model=os.getenv('MISTRAL_OCR_MODEL', 'mistral-ocr-latest'),
+            mistral_include_images=os.getenv('MISTRAL_INCLUDE_IMAGES', '').lower() in ('true', '1', 'yes')
         )
         
         # Create processor
@@ -1447,17 +1770,51 @@ async def async_main():
         console.print("[bold green]✓[/bold green] Processor initialized successfully\n")
         
         # Handle database reset if requested
-        if args.reset_db:
+        if reset_db:
             console.print("[bold yellow]Resetting database...[/bold yellow]")
             await reset_database(processor.engine)
             console.print("[bold green]✓[/bold green] Database reset successfully\n")
+            
+            # Still need to initialize the database after reset
+            console.print("[bold]Initializing fresh database...[/bold]")
+            await processor.initialize_database(drop_all=False)  # Tables are already dropped by reset_database
+            console.print("[bold green]✓[/bold green] Fresh database initialized successfully\n")
         else:
             # Initialize database normally
             console.print("[bold]Setting up database...[/bold]")
             await processor.initialize_database()
             console.print("[bold green]✓[/bold green] Database initialized successfully\n")
         
-        # Process documents
+        # If directory is provided, process it directly
+        if directory:
+            # Ensure the directory exists
+            if not os.path.exists(directory):
+                console.print(f"[bold red]Error:[/bold red] Directory {directory} does not exist")
+                return
+                
+            if not os.path.isdir(directory):
+                console.print(f"[bold red]Error:[/bold red] {directory} exists but is not a directory")
+                return
+                
+            console.print(f"\n[bold]Processing all documents in directory: {directory}...[/bold]")
+            with console.status("[bold green]Processing documents...[/bold green]"):
+                chunks = await processor.process_directory(directory)
+            
+            console.print(f"[bold green]✓[/bold green] Processing complete")
+            if isinstance(chunks, list):
+                console.print(f"[bold green]✓[/bold green] Created {len(chunks)} chunks")
+            elif isinstance(chunks, dict):
+                console.print(f"[bold green]✓[/bold green] Processed {chunks.get('processed', 0)} files")
+                console.print(f"[bold green]✓[/bold green] Created {chunks.get('chunks', 0)} chunks")
+                if chunks.get('skipped', 0):
+                    console.print(f"[bold yellow]![/bold yellow] Skipped {chunks.get('skipped', 0)} files")
+                if chunks.get('errors', 0):
+                    console.print(f"[bold red]![/bold red] Encountered {chunks.get('errors', 0)} errors")
+            else:
+                console.print(f"[bold green]✓[/bold green] Processing completed successfully")
+            return
+        
+        # Interactive mode if no directory is provided
         console.print("[bold]Document Processing Options:[/bold]")
         console.print("  1. [green]Process a single document[/green]")
         console.print("  2. [green]Process all documents in the default directory(documents)[/green]")
@@ -1555,4 +1912,28 @@ async def async_main():
             await processor.engine.dispose()
 
 if __name__ == "__main__":
-    asyncio.run(async_main())
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Document RAG Loader")
+    parser.add_argument(
+        "--directory", "-d", 
+        type=str, 
+        help="Directory containing documents to process"
+    )
+    parser.add_argument(
+        "--reset-db", "-r", 
+        action="store_true", 
+        help="Reset database before processing"
+    )
+    parser.add_argument(
+        "--use-docling", "-dl", 
+        action="store_true", 
+        help="Use docling for document loading instead of default loaders"
+    )
+    
+    args = parser.parse_args()
+    
+    asyncio.run(async_main(
+        directory=args.directory,
+        reset_db=args.reset_db,
+        use_docling=args.use_docling
+    ))

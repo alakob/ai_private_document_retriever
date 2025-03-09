@@ -15,7 +15,7 @@ from packaging import version
 import sklearn
 
 # Local imports
-from document_rag_loader import (
+from app.core.document_rag_loader import (
     DocumentModel,
     DocumentChunk,
     PostgresConfig,
@@ -436,7 +436,8 @@ class VectorStoreVisualization:
         self, 
         color_map: Optional[Dict[str, str]] = None,
         width: int = DEFAULT_FIGURE_WIDTH,
-        height: int = DEFAULT_FIGURE_HEIGHT
+        height: int = DEFAULT_FIGURE_HEIGHT,
+        perplexity: int = 30
     ) -> go.Figure:
         """Create 3D visualization of vectors"""
         start_time = datetime.now()
@@ -456,6 +457,12 @@ class VectorStoreVisualization:
 
             # Initialize TSNE with appropriate parameters based on sample size
             tsne_params = get_tsne_params(n_samples)
+            
+            # Override perplexity if provided
+            if perplexity is not None:
+                tsne_params['perplexity'] = min(perplexity, n_samples - 1)
+                logger.info(f"Overriding perplexity value to {tsne_params['perplexity']}")
+                
             logger.info(f"Using t-SNE parameters: {tsne_params}")
             self.tsne = TSNE(**tsne_params)
 
@@ -551,11 +558,19 @@ class VectorStoreVisualization:
         )
 
 # Update main visualization function with better error handling
-async def visualize_vector_store(session: AsyncSession) -> go.Figure:
-    """Main function to create visualization"""
+async def visualize_vector_store(session: AsyncSession, perplexity: int = 30) -> go.Figure:
+    """Main function to create visualization
+    
+    Args:
+        session: Database session for data retrieval
+        perplexity: t-SNE perplexity parameter (default: 30)
+        
+    Returns:
+        Plotly Figure object with the visualization
+    """
     try:
         start_time = datetime.now()
-        logger.info("Starting vector store visualization process")
+        logger.info(f"Starting vector store visualization process with perplexity={perplexity}")
         
         if session is None:
             raise ValueError("Database session is required")
@@ -580,7 +595,8 @@ async def visualize_vector_store(session: AsyncSession) -> go.Figure:
             
         try:
             visualizer = VectorStoreVisualization(vector_data)
-            fig = visualizer.create_3d_visualization()
+            # Pass the perplexity parameter to the visualization method
+            fig = visualizer.create_3d_visualization(perplexity=perplexity)
         except (InsufficientDataError, VisualizationError) as e:
             return create_error_figure(str(e))
         
