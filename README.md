@@ -106,6 +106,7 @@ ai_private_document_retriever/
 - **Vector Storage**: Store document embeddings in PostgreSQL with pgvector extension
 - **Similarity Search**: Find the most relevant document chunks for any query
 - **Chat Interface**: Interactive UI for asking questions about your documents
+- **Conceptual Diagrams**: Generate Mermaid diagrams that visually represent the key concepts and relationships in your chat history
 - **Visualization**: Visualize document embeddings in 2D space
 - **Embedding Caching**: Dual caching system (file-based and Redis) for embeddings to reduce API calls and improve performance
 
@@ -124,6 +125,16 @@ For more information, see the documentation in the `docs/` directory:
 - `project_architecture.md`: Overview of the system architecture
 - `project_structure.md`: Details of the project structure and organization
 - `docling_integration.md`: Guide to using Docling for enhanced document conversion
+
+## Conceptual Diagrams
+
+The system includes a powerful feature to generate conceptual diagrams from your chat history:
+
+1. **Automatic Analysis**: The system analyzes your chat history to extract key concepts and relationships
+2. **Mermaid Diagram Generation**: Visualizes these concepts using Mermaid.js for clear, interactive diagrams
+3. **Integration in UI**: Access diagrams directly in the chat interface by clicking the "Generate Conceptual Diagram" button
+4. **Multiple Diagram Types**: Supports various diagram formats including flowcharts, mindmaps, and graphs
+5. **Styled Visualization**: Diagrams use color coding and styling to differentiate between different types of concepts
 
 ## Environment Configuration
 
