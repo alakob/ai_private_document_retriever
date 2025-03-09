@@ -208,6 +208,161 @@ def get_optimal_workers() -> int:
     except Exception:
         return 4  # Default fallback
 
+
+@dataclass
+class PromptConfig:
+
+    """Configuration for prompts used in the application."""
+    # Document prompt template for formatting document content
+    document_template: str = "{page_content}"
+
+    # QA prompt template for answering questions based on context
+    qa_template: str = """
+    You are a knowledgeable AI assistant tasked with providing accurate, evidence-based answers.
+
+    INSTRUCTIONS:
+    1. Base your answer EXCLUSIVELY on the provided context
+    2. If the context lacks sufficient information, clearly state what specific information is missing
+    3. Always cite your sources
+    4. Prioritize the most relevant information first
+    5. Structure longer answers with clear headings or bullet points for readability
+    6. Maintain a professional, objective tone
+    7. Be detailed but concise
+
+
+    CONTEXT:
+    {context}
+
+    CONVERSATION HISTORY:
+    {chat_history}
+
+    QUESTION:
+    {question}
+
+    ANSWER:
+    """
+
+    # Diagram generation prompt for creating mermaid diagrams from chat history
+    diagram_template: str = """
+    Create a visual representation of the conversation by analyzing the chat history and extracting key concepts and relationships.
+
+    ANALYSIS INSTRUCTIONS:
+    1. Identify 3-7 main topics or themes from the chat history
+    2. Determine logical relationships between topics (causation, hierarchy, sequence, etc.)
+    3. Extract critical insights, conclusions, or decision points
+    4. Note any significant shifts in discussion direction
+    5. Identify recurring themes or patterns
+
+    DIAGRAM REQUIREMENTS:
+    1. Choose the MOST APPROPRIATE diagram type:
+    - Flowchart: For processes, sequences, or decision paths
+    - Mindmap: For hierarchical concept exploration from central ideas
+    - Entity-Relationship: For showing how different elements interact
+    - Gantt: For timeline-based discussions
+    - Class Diagram: For structural relationships
+
+    2. Design principles:
+    - Use distinctive node shapes for different concept types
+    - Apply color coding consistently (max 4 colors)
+    - Keep text labels concise (3-5 words max)
+    - Ensure the diagram has clear entry and exit points if applicable
+    - Limit diagram complexity to maximum 15-20 nodes
+
+    3. Technical specifications:
+    - Use proper mermaid syntax and indentation
+    - Include appropriate direction (TD, LR, etc.) based on diagram complexity
+    - Incorporate subgraphs to group related concepts
+    - Use appropriate connector types (-->, ---|, -.->)
+    - Add brief node descriptions when necessary
+
+    OUTPUT INSTRUCTIONS:
+    1. Provide ONLY the valid mermaid code block
+    2. Ensure all syntax is correct and renderable
+
+    Chat History:
+    {chat_history}
+    """
+
+
+    # """Configuration for prompts used in the application."""
+    
+    # # Document prompt template for formatting document content
+    # document_template: str = "{page_content}"
+    
+    # # QA prompt template for answering questions based on context
+    # qa_template: str = """
+    # You are a helpful AI assistant that answers questions based on the provided documents.
+    
+    # Instructions:
+    # 1. Use ONLY the following context to answer the question
+    # 2. If the context doesn't contain enough information, explain what's missing
+    # 3. Always cite your sources
+    # 4. Be detailed but concise
+    
+    # Context: {context}
+    
+    # Previous conversation:
+    # {chat_history}
+    
+    # Question: {question}
+    
+    # Answer: """
+    
+    # # Diagram generation prompt for creating mermaid diagrams from chat history
+    # diagram_template: str = """
+    # Analyze the provided chat history and extract the key concepts, themes, and relationships between them. 
+    # Use this information to generate a conceptual diagram that visually represents the structure and flow of ideas. 
+    # The diagram should include:
+
+    # Main Topics: Identify the primary subjects discussed.
+    # Subtopics & Relationships: Show how different ideas are connected.
+    # Key Insights: Highlight important takeaways from the conversation.
+    # Flow & Interaction: Represent how ideas evolve over time, if applicable.
+    
+    # Ensure the diagram is clear, organized, and easy to understand. Use labeled nodes and arrows to indicate relationships. 
+    # If possible, group related concepts for better visualization.
+
+    # Format your response as a Mermaid diagram. Use one of the following diagram types that best represents the conversation:
+    # 1. Flowchart (for sequential processes)
+    # 2. Mindmap (for hierarchical relationships)
+    # 3. Graph (for complex relationships)
+    
+    # Example Mermaid syntax for a flowchart:
+    # ```mermaid
+    # flowchart TD
+    #   A[Main Topic] --> B[Subtopic 1]
+    #   A --> C[Subtopic 2]
+    #   B --> D[Detail 1]
+    #   C --> E[Detail 2]
+    # ```
+    
+    # Example Mermaid syntax for a mindmap:
+    # ```mermaid
+    # mindmap
+    #   root((Main Topic))
+    #     Subtopic 1
+    #       Detail 1
+    #       Detail 2
+    #     Subtopic 2
+    #       Detail 3
+    # ```
+    
+    # Example Mermaid syntax for a graph:
+    # ```mermaid
+    # graph TD
+    #   A[Topic 1] --- B[Topic 2]
+    #   A --- C[Topic 3]
+    #   B --- D[Topic 4]
+    #   C --- D
+    # ```
+    
+    # Use appropriate styling to differentiate between different types of nodes (main topics, subtopics, insights, etc.).
+    # Only include the Mermaid diagram code in your response, nothing else.
+    
+    # Chat History:
+    # {chat_history}
+    # """
+
 # Create instances of configs for easy import
 embedding_config = EmbeddingConfig()
 chunking_config = ChunkingConfig(
@@ -234,3 +389,6 @@ processor_config = ProcessorConfig(
 # Configure vector search with Redis if enabled
 use_redis_cache = redis_config.enabled
 vector_search_config = VectorSearchConfig(use_redis_cache=use_redis_cache)
+
+# Create prompt config
+prompt_config = PromptConfig()
