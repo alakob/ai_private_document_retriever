@@ -34,13 +34,13 @@ graph TD
         AdminService -- TCP --> DBService
     end
 
-    UserBrowser -- HTTP (Port 7861) --> AppService
-    UserBrowser -- HTTP (Port 8000) --> AppService
-    UserBrowser -- HTTP (Port 8080) --> AdminService
-    UserCLI -- docker compose exec --> AppService
+    UserBrowser --> AppService
+    UserBrowser --> AppService
+    UserBrowser --> AdminService
+    UserCLI --> AppService
 
-    AppService -- API Call --> External_OpenAI[External OpenAI API]
-    AppService -- API Call --> External_Mistral[External Mistral API (Optional)]
+    AppService --> External_OpenAI[External OpenAI API]
+    AppService --> External_Mistral[External Mistral API (Optional)]
 
     %% Styling
     classDef container fill:#f9f,stroke:#333,stroke-width:2px;

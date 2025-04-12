@@ -9,8 +9,8 @@ graph TD
     end
 
     subgraph Application Container [rag-app Container]
-        Browser -- HTTPS --\> GradioUI[Gradio Web UI /app/ui/chat_interface.py]
-        Browser -- HTTPS --\> FastAPI[FastAPI Backend /main.py, /app/routers]
+        Browser --> GradioUI[Gradio Web UI /app/ui/chat_interface.py]
+        Browser --> FastAPI[FastAPI Backend /main.py, /app/routers]
         
         GradioUI -- Calls methods --> ChatLogic[Chat Logic /app/ui/chat_interface.py]
         FastAPI -- Calls methods --> APILogic[API Logic /app/routers/*]
