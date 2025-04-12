@@ -44,5 +44,7 @@ graph TD
 
     %% Styling
     classDef container fill:#f9f,stroke:#333,stroke-width:2px;
-    class AppService,DBService,AdminService container
+    class AppService container
+    class DBService container
+    class AdminService container
 ```
