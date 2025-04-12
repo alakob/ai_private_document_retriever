@@ -17,14 +17,14 @@ sequenceDiagram
     CLI->>+DocProcessor: process_directory(directory_path)
     DocProcessor->>DocProcessor: List files in directory
     loop For Each File
-        DocProcessor->>+AsyncSession: check_duplicate_document(checksum)
+        DocProcessor->>AsyncSession: check_duplicate_document(checksum)
         AsyncSession->>+PostgresDB: Query documents table by checksum
         PostgresDB-->>-AsyncSession: Existing document? (Yes/No)
         alt Checksum Exists
-            AsyncSession-->>-DocProcessor: Return existing doc info
+            AsyncSession-->>DocProcessor: Return existing doc info
             DocProcessor->>DocProcessor: Log Skipping File
         else Checksum Does Not Exist
-            AsyncSession-->>-DocProcessor: Return None
+            AsyncSession-->>DocProcessor: Return None
             DocProcessor->>+FileLoader: load(file_path)
             Note over FileLoader: Uses specific loader based on config/file type
             alt Mistral Loader Used
@@ -36,10 +36,10 @@ sequenceDiagram
             TextSplitter-->>-DocProcessor: Return chunks (List[Document])
             DocProcessor->>+OpenAIEmbed: aembed_documents(chunk_texts)
             OpenAIEmbed-->>-DocProcessor: Return embeddings (List[vector])
-            DocProcessor->>+AsyncSession: Store document metadata & chunks
+            DocProcessor->>AsyncSession: Store document metadata & chunks
             AsyncSession->>+PostgresDB: INSERT into documents & document_chunks tables
             PostgresDB-->>-AsyncSession: Confirm insert
-            AsyncSession-->>-DocProcessor: Confirm storage
+            AsyncSession-->>DocProcessor: Confirm storage
             DocProcessor->>DocProcessor: Log File Processed
         end
     end
