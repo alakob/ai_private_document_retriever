@@ -60,7 +60,7 @@ sequenceDiagram
         *   If the checksum is new:
             *   **Loading:** The appropriate **File Loader** (selected based on configuration and file type, potentially using **Mistral OCR**) reads the file content.
             *   **Splitting:** The loaded content is passed to a **Text Splitter** (e.g., `RecursiveCharacterTextSplitter`) to create smaller chunks.
-            *   **Embedding:** The text of each chunk is sent to the **OpenAI Embedding API** to get vector embeddings.
+            *   **Embedding:** The text of each chunk is sent to the **OpenAI Embedding API** to get vector embeddings. *(Note: For enhanced privacy where sending content externally is a concern, a private [Ollama](https://ollama.com/) instance can be installed locally. Open-source models like `nomic-embed-text` or `all-minilm` can then be configured and used for embedding generation entirely offline. This requires modifying the embedding configuration and potentially the `DocumentProcessor` logic.)*
             *   **Storage:** The processor opens a database session and inserts the document metadata (filename, checksum) into the `documents` table and the chunk content, metadata, and vector embedding into the `document_chunks` table in **PostgreSQL**.
 5.  **Summary:** After processing all files, a summary is returned to the CLI and displayed to the operator.
 *   **Table Creation:** The `process` command first ensures necessary tables (`documents`, `document_chunks`) exist by calling `Base.metadata.create_all`. 

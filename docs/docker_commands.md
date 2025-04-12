@@ -73,4 +73,13 @@ docker compose exec app python main.py search --clear-cache
 ```
 
 #### Visualization
+```bash
+# Generate default visualization (output to visualizations/vector_visualization.html)
+docker compose exec app python main.py visualize
+
+# Generate visualization with custom output file and perplexity
+docker compose exec app python main.py visualize --output visualizations/custom_plot.html --perplexity 50
+```
+
+#### API Server
 ```
