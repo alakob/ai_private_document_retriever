@@ -11,6 +11,8 @@ documents/
 # Task-Master AI
 README-task-master.md
 scripts/
+.env.example
+
 
 # Windsurf rules
 .windsurfrules
@@ -90,4 +92,7 @@ node_modules/
 # OS specific
 # Task files
 tasks.json
-tasks/ 
+tasks/
+
+# Gradio cache/temp files
+.gradio/
