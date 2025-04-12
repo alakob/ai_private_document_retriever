@@ -39,8 +39,8 @@ graph TD
     UserBrowser --> AdminService
     UserCLI --> AppService
 
-    AppService --> External_OpenAI[External OpenAI API]
-    AppService --> External_Mistral[External Mistral API (Optional)]
+    AppService --> External_OpenAI["External OpenAI API"]
+    AppService --> External_Mistral["External Mistral API (Optional)"]
 
     %% Styling
     classDef container fill:#f9f,stroke:#333,stroke-width:2px;
