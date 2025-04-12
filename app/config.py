@@ -119,6 +119,21 @@ class ProcessorConfig:
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap
             )
+        # Ensure postgres_config is set if using postgres vector store
+        if self.vector_store_type == "postgres" and self.postgres_config is None:
+            # Need to access the global db_config, which should be defined before this
+            # from . import db_config # REMOVED: Causes import timing issues
+            if 'db_config' not in globals():
+                raise RuntimeError("db_config must be defined before processor_config in config.py")
+                
+            self.postgres_config = PostgresConfig(
+                connection_string=db_config.connection_string,
+                embedding_dimension=self.embedding_config.embedding_dimension,
+                # You might want to set other PostgresConfig fields here too if needed
+                # collection_name = "documents",
+                # pre_delete_collection = False,
+                # drop_existing = False # Should be handled by reset logic
+            )
 
 @dataclass
 class ChatConfig:
@@ -371,32 +386,28 @@ class PromptConfig:
     # {chat_history}
     # """
 
-# Create instances of configs for easy import
-embedding_config = EmbeddingConfig()
-chunking_config = ChunkingConfig(
-    chunk_size=int(os.getenv('CHUNK_SIZE', 1000)),
-    chunk_overlap=int(os.getenv('CHUNK_OVERLAP', 200))
+# ====================================================================
+# Initialize configuration objects (ORDER MATTERS HERE)
+# ====================================================================
+
+# Database config must be defined first as ProcessorConfig depends on it
+db_config = DatabaseConfig()
+
+# Processor config needs db_config for its __post_init__
+processor_config = ProcessorConfig(
+    openai_api_key=os.getenv('OPENAI_API_KEY') # Pass essential args not automatically handled by defaults
 )
+
+# Other configs
+chat_config = ChatConfig()
+redis_config = RedisConfig()
+vector_search_config = VectorSearchConfig()
+prompt_config = PromptConfig()
+
+# Ensure embedding config is defined (it's used by ProcessorConfig)
+embedding_config = EmbeddingConfig()
+chunking_config = ChunkingConfig() # This will use defaults from ProcessorConfig
 file_processing_config = FileProcessingConfig()
 index_config = IndexConfig()
-
-chat_config = ChatConfig()
-db_config = DatabaseConfig()
-redis_config = RedisConfig()
-processor_config = ProcessorConfig(
-    chunk_size=int(os.getenv('CHUNK_SIZE', 1000)),
-    chunk_overlap=int(os.getenv('CHUNK_OVERLAP', 200)),
-    max_workers=get_optimal_workers(),
-    openai_api_key=os.getenv('OPENAI_API_KEY'),
-    embedding_config=embedding_config,
-    chunking_config=chunking_config,
-    file_processing_config=file_processing_config,
-    index_config=index_config
-)
-
-# Configure vector search with Redis if enabled
-use_redis_cache = redis_config.enabled
-vector_search_config = VectorSearchConfig(use_redis_cache=use_redis_cache)
-
-# Create prompt config
-prompt_config = PromptConfig()
+rate_limit_config = RateLimitConfig()
+resource_config = ResourceConfig()

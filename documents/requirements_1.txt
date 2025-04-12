@@ -1,5 +1,0 @@
-requests_cache
-jinja2
-cameroon
-alako
-blaise

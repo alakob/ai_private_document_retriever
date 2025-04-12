@@ -32,16 +32,16 @@ Here are the Docker equivalents for common application commands:
 
 #### Document Processing
 ```bash
-# Basic document processing
+# Basic document processing (uses default LangChain loaders)
 docker compose exec app python main.py process --dir documents
 
-# Process documents with Docling
+# Process documents using Docling loader
 docker compose exec app python main.py process --dir documents --use-docling
 
-# Process documents with Mistral OCR
+# Process documents using Mistral OCR API (requires MISTRAL_API_KEY)
 docker compose exec app python main.py process --dir documents --use-mistral
 
-# Reset database and process documents
+# Reset database tables before processing (deletes existing processed data)
 docker compose exec app python main.py process --dir documents --reset-db
 ```
 
@@ -53,31 +53,24 @@ docker compose exec app python main.py chat
 
 #### Vector Search
 ```bash
-# Interactive search
+# Enter interactive search mode
 docker compose exec app python main.py search
 
-# Direct search with query
-docker compose exec app python main.py search --query "your search query"
+# Perform a direct search
+docker compose exec app python main.py search --query "your specific search query here"
 
-# Search with custom parameters
-docker compose exec app python main.py search --query "your search query" --top-k 10 --threshold 0.6
+# Direct search with custom top-k and similarity threshold
+docker compose exec app python main.py search --query "details about project X" --top-k 10 --threshold 0.65
 
-# Cache management
+# Perform search disabling the embedding cache for this query
+docker compose exec app python main.py search --query "latest status update" --no-cache
+
+# Display embedding cache information (size, location, etc.)
 docker compose exec app python main.py search --cache-info
+
+# Clear the entire embedding cache
 docker compose exec app python main.py search --clear-cache
 ```
 
 #### Visualization
-```bash
-# Generate default visualization
-docker compose exec app python main.py visualize
-
-# Custom visualization
-docker compose exec app python main.py visualize --output visualizations/custom_visualization.html --perplexity 50
 ```
-
-#### API Server
-```bash
-# Start the API server (accessible at http://localhost:8000)
-docker compose exec app python main.py api
-``` 

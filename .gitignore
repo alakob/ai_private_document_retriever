@@ -8,6 +8,10 @@ documents/
 .env.original
 .env.docker
 
+# Task-Master AI
+README-task-master.md
+scripts/
+
 # Windsurf rules
 .windsurfrules
 

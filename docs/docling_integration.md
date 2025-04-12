@@ -50,10 +50,14 @@ DOCLING_USE_CACHE=true
 
 ### Command-Line Usage
 
-When processing documents, you can enable docling with the `--use-docling` flag:
+When processing documents via the main CLI, you can enable docling with the `--use-docling` flag:
 
 ```bash
-python -m app.core.document_rag_loader --directory /path/to/documents --use-docling
+# Using the main script
+python main.py process --dir /path/to/documents --use-docling
+
+# Using Docker Compose
+docker compose exec app python main.py process --dir documents --use-docling
 ```
 
 ## Pre-downloading Models for Offline Use

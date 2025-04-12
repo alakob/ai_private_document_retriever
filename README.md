@@ -17,44 +17,48 @@ DocuSeek AI provides a complete RAG (Retrieval-Augmented Generation) system for 
 - Python 3.8+
 - Docker & Docker Compose (Recommended)
 - `docker buildx` plugin enabled (usually included with recent Docker Desktop versions)
-- PostgreSQL with pgvector extension (provided by Docker setup)
 - OpenAI API Key
 - (Optional) Mistral API Key (for OCR)
-- (Optional) Redis (for caching, not configured by default)
 
 See [Dependencies](docs/dependencies.md) for full details.
 
 ### Using Docker (Recommended)
 
-This setup uses `docker buildx bake` for efficient image building and `docker compose` for service orchestration.
+This setup uses a simple script to build the image and start all services.
 
 1.  **Configure Environment**: Create a file named `.env.docker` in the project root. Copy the contents from the example in [Environment Configuration](docs/environment_configuration.md) and populate it with your API keys and desired settings (e.g., database password).
 
-2.  **Build Application Image**: Use `docker buildx bake` to build the application image using `docker-bake.hcl`. This step ensures the image is loaded into the local Docker daemon.
+2.  **Run the Startup Script**: Make the script executable (if you haven't already) and run it:
     ```bash
-    docker buildx bake
+    chmod +x start_docker.sh
+    ./start_docker.sh
     ```
-    *(Note: If this is the first time running `bake` or after changes, and compose later fails with image not found, ensure your buildx builder is configured correctly or try `docker buildx bake --load`)*
+    This script will automatically:
+    *   Build the application image using `docker buildx bake`.
+    *   Start the application (Chat UI by default), PostgreSQL, and pgAdmin using `docker compose`.
 
-3.  **Start Services**: Use `docker compose` to start the application (Chat UI by default), PostgreSQL, and pgAdmin. It reads configuration from `.env.docker`.
-    ```bash
-    docker compose --env-file .env.docker up -d
-    ```
-    *Troubleshooting Compose Warnings: If `docker compose up` warns about missing `OPENAI_API_KEY` or other variables despite them being in `.env.docker`, check if those variables are set (even if empty) in your shell environment (`echo $VAR_NAME`). Shell variables take precedence; `unset VAR_NAME` in your shell before running `compose` if needed.* 
-
-4.  **Access Services**:
+3.  **Access Services (Chat UI runs by default)**:
     *   **Chat Interface**: `http://localhost:7861`
     *   **pgAdmin**: `http://localhost:8080` (Login with details from `.env.docker`)
+    *   *Note: The API server (port 8000) is not started by default. See instructions below or the [Docker Command Reference](docs/docker_commands.md) to start it.*
 
-5.  **Process Your Documents**: Once the services are running, place your documents in the `documents/` directory and run the processing command:
+4.  **Process Your Documents**: Once the services are running, place your documents in the `documents/` directory and run the processing command:
     ```bash
     docker compose exec app python main.py process --dir documents
     ```
     *(Note: The first time you run this after resetting the database, it will automatically create the necessary database tables.)*
 
-6.  **Use the Chat**: Interact with your documents via the Chat Interface at `http://localhost:7861`.
+5.  **Use the Chat or Start API Server**:
+    *   Interact with your documents via the Chat Interface at `http://localhost:7861`.
+    *   **Optional: Start the API Server.** If you need the API endpoints, run this command in a separate terminal:
+        ```bash
+        docker compose exec app python main.py api
+        ```
+        Then access the API at `http://localhost:8000` (Docs: `http://localhost:8000/docs`).
 
-See the full [Docker Command Reference](docs/docker_commands.md) for other commands (API server, search, visualization, etc.).
+*Troubleshooting: If `docker compose up` (run by the script) warns about missing API keys despite them being in `.env.docker`, check if those variables are set in your shell (`echo $VAR_NAME`). Shell variables take precedence; `unset VAR_NAME` before running the script if needed.* 
+
+See the full [Docker Command Reference](docs/docker_commands.md) for manual commands and other operations.
 
 ### Manual Setup
 
