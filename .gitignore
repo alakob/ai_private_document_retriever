@@ -1,5 +1,12 @@
 # Environment variables
 .env
+.cursor/
+.cursorrules
+
+documents/
+
+.env.original
+.env.docker
 
 # Windsurf rules
 .windsurfrules
@@ -58,4 +65,25 @@ ENV/
 # Temporary files
 tmp/
 temp/
-*.tmp 
+*.tmp
+
+# Added by Claude Task Master
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev-debug.log
+# Dependency directories
+node_modules/
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# OS specific
+# Task files
+tasks.json
+tasks/ 

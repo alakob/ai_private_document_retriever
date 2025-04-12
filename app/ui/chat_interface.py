@@ -1087,7 +1087,7 @@ async def main():
         with gr.Blocks() as demo:
             gr.Markdown("""
                 <div style="text-align: center; margin-bottom: 20px;">
-                    <h1>Document Q&A System</h1>
+                    <h1>DocuSeek AI</h1>
                     <p>Ask questions about your documents. The system will search through the document collection and provide relevant answers.</p>
                 </div>
             """)
@@ -1136,7 +1136,7 @@ async def main():
             """, visible=False)
             
             # Document Upload Accordion with white background
-            with gr.Accordion("Document Upload/Processing", open=False, elem_id="document-accordion"):
+            with gr.Accordion("Document Upload/Processing", open=False):
                 upload_button = gr.UploadButton(
                     "Click to Upload Files",
                     variant="huggingface",
@@ -1193,7 +1193,7 @@ async def main():
                 
                 /* Fix spacing in radio button group */
                 .gradio-container .compact-radio {
-                    max-width: 500px;
+                    /* max-width: 500px; */ /* Removed to allow full width */
                     margin: 0 auto;
                 }
                 /* Center the label */
@@ -1268,10 +1268,11 @@ async def main():
                         min-height: 250px;
                         max-height: 500px;
                         overflow-y: auto;
-                        background-color: #1a1a1a;
+                        background-color: #f5f5f5;  /* Changed from #1a1a1a (black) to light gray */
                         border-radius: 4px;
                         margin-top: 10px;
                         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        color: #333;  /* Ensuring text color is dark for readability on light background */
                     }
                     
                     /* Style for lists in the progress box */
@@ -2215,9 +2216,10 @@ async def main():
             )
 
         await demo.launch(
-            server_name=chat_config.server_name,
+            server_name=chat_config.server_name, # Use config value
+            server_port=chat_config.server_port,
             share=chat_config.share,
-            inbrowser=chat_config.inbrowser
+            # Add other parameters like share=True if needed
         )
     
     except Exception as e:

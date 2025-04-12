@@ -1,0 +1,130 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ragSystem}
+      POSTGRES_HOST_AUTH_METHOD: md5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: '6G'
+    networks:
+      - rag-network
+    user: postgres
+  
+  # pgAdmin - PostgreSQL Admin Tool
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rag-pgadmin
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@example.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin}
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-yourpassword}
+      - POSTGRES_DB=${POSTGRES_DB:-ragSystem}
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+      - PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION=False
+      - PGADMIN_CONFIG_AUTO_SAVE_PASSWORD=True
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/init/setup.sh:/setup.sh
+    user: "5050"
+    entrypoint: ["/setup.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 500M
+    healthcheck:
+      test: ["CMD", "wget", "-O", "-", "http://localhost:80/misc/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # Application Service
+  app:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    image: docuseek-ai-app:latest
+    container_name: rag-app
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-yourpassword}
+      - POSTGRES_DB=${POSTGRES_DB:-ragSystem}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - USE_REDIS_CACHE=${USE_REDIS_CACHE:-false}
+      - MODEL=${MODEL:-gpt-4o-mini}
+      - CHUNK_SIZE=${CHUNK_SIZE:-1000}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
+      - TMPDIR=/app/tmp
+    env_file:
+      - .env.docker
+    volumes:
+      - ./documents:/app/documents
+      - ./visualizations:/app/visualizations
+      - app_data:/app/data
+      - app_tmp:/app/tmp
+    ports:
+      - "8000:8000"
+      - "7861:7860"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+networks:
+  rag-network:
+    driver: bridge
+    name: rag-network
+    driver_opts:
+      com.docker.network.bridge.name: rag-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres_data:
+    name: rag-postgres-data
+  app_data:
+    name: rag-app-data
+  app_tmp:
+    name: rag-app-tmp
+  pgadmin_data:
+    name: rag-pgadmin-data

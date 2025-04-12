@@ -124,8 +124,9 @@ class ProcessorConfig:
 class ChatConfig:
     """Configuration for chat interface."""
     model: str = os.getenv('MODEL', 'gpt-4o-mini')
-    server_name: str = os.getenv('SERVER_NAME', '127.0.0.1')
-    share: bool = True
+    server_name: str = os.getenv('SERVER_NAME', '0.0.0.0')
+    server_port: int = int(os.getenv('GRADIO_SERVER_PORT', 7860))
+    share: bool = os.getenv('GRADIO_SHARE', 'false').lower() in ('true', '1', 'yes')
     inbrowser: bool = True
     documents_dir: str = os.getenv('KNOWLEDGE_BASE_DIR', 'documents')
     retriever_k: int = 4
@@ -151,9 +152,16 @@ class DatabaseConfig:
     user: str = os.getenv('POSTGRES_USER', 'postgres')
     password: str = os.getenv('POSTGRES_PASSWORD', '')
     database: str = os.getenv('POSTGRES_DB', 'ragSystem')
+    pool_size: int = int(os.getenv('POSTGRES_POOL_SIZE', 5))
+    max_overflow: int = int(os.getenv('POSTGRES_MAX_OVERFLOW', 10))
+    pool_timeout: int = int(os.getenv('POSTGRES_POOL_TIMEOUT', 30))
+    pool_recycle: int = int(os.getenv('POSTGRES_POOL_RECYCLE', 1800))  # 30 minutes
+    connect_retries: int = int(os.getenv('POSTGRES_CONNECT_RETRIES', 5))
+    connect_retry_delay: int = int(os.getenv('POSTGRES_CONNECT_RETRY_DELAY', 5))
     
     @property
     def connection_string(self) -> str:
+        # Docker-friendly connection string with expanded parameters
         return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
 
 @dataclass

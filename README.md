@@ -1,232 +1,111 @@
-# AI Private Document Retriever
+# DocuSeek AI
 
 A system for private document retrieval using vector similarity search and Large Language Models.
 
 ## Project Overview
 
-This project provides a complete RAG (Retrieval-Augmented Generation) system for processing, indexing, and querying private documents. It uses modern vector embedding techniques and integrates with powerful language models to provide accurate, contextual responses based on your document corpus.
+DocuSeek AI provides a complete RAG (Retrieval-Augmented Generation) system for processing, indexing, and querying private documents. It leverages vector embeddings and integrates with LLMs to deliver contextual responses based on your document corpus.
 
-## Project Structure
+## Quick Start
 
-The project has been organized into a structured layout:
-
-```
-ai_private_document_retriever/
-│
-├── app/                        # Main application code
-│   ├── config.py               # Configuration settings
-│   ├── models.py               # Database models
-│   │
-│   ├── core/                   # Core functionality
-│   │   └── document_rag_loader.py  # Document processing
-│   │
-│   ├── services/               # Service layer
-│   │   └── vector_similarity_search.py  # Vector similarity search
-│   │
-│   └── ui/                     # User interface components
-│       └── chat_interface.py   # Chat interface
-│
-├── utils/                      # Utility modules
-│   └── vector_store_visualization.py  # Vector visualization
-│
-├── docs/                       # Documentation
-│   ├── project_architecture.md # Architecture documentation
-│   ├── project_structure.md    # Structure documentation
-│   └── diagram_renderer.html   # Diagram rendering
-│
-├── documents/                  # Document storage
-│
-├── main.py                     # Application entry point with CLI commands:
-│                               # - process: Process documents
-│                               # - chat: Start chat interface
-│                               # - search: Run vector similarity search
-│                               # - visualize: Generate vector visualization
-│
-└── requirements.txt            # Project dependencies
-```
-
-## Getting Started
-
-1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-2. Configure your environment:
-   - Create a `.env` file with the necessary API keys and configuration
-   - Sample `.env` file:
-     ```
-     OPENAI_API_KEY=your_openai_api_key
-     MISTRAL_API_KEY=your_mistral_api_key
-     POSTGRES_USER=postgres
-     POSTGRES_PASSWORD=yourpassword
-     POSTGRES_HOST=localhost
-     POSTGRES_PORT=5432
-     POSTGRES_DB=ragSystem
-     ```
-
-3. Available commands:
-
-   ```
-   # Process documents
-   python main.py process --dir documents
-
-   # Process documents with Docling (enhanced document conversion)
-   python main.py process --dir documents --use-docling
-
-   # Process documents with Mistral OCR API (for better text extraction)
-   python main.py process --dir documents --use-mistral
-
-   # Process documents and reset the database (warning: deletes existing data)
-   python main.py process --dir documents --reset-db
-
-   # Start chat interface
-   python main.py chat
-
-   # Start chat interface with a shareable link
-   python main.py chat --share
-
-   # Interactive vector search
-   python main.py search
-
-   # Direct vector search
-   python main.py search --query "your search query"
-
-   # Direct vector search with custom parameters
-   python main.py search --query "your search query" --top-k 10 --threshold 0.6
-
-   # Display cache information
-   python main.py search --cache-info
-
-   # Clear embedding cache
-   python main.py search --clear-cache
-
-   # Generate visualization
-   python main.py visualize
-
-   # Generate visualization with custom parameters
-   python main.py visualize --output custom_visualization.html --perplexity 50
-   ```
-
-## Features
-
-- **Document Processing**: Load, chunk, and embed documents from various formats (PDF, DOCX, TXT, etc.)
-- **Enhanced Document Conversion**: Optional integration with Docling for improved document structure preservation
-- **OCR Capabilities**: Integration with Mistral OCR API for superior text extraction from documents and images
-- **Vector Storage**: Store document embeddings in PostgreSQL with pgvector extension
-- **Similarity Search**: Find the most relevant document chunks for any query
-- **Chat Interface**: Interactive UI for asking questions about your documents
-- **Conceptual Diagrams**: Generate Mermaid diagrams that visually represent the key concepts and relationships in your chat history
-- **Visualization**: Visualize document embeddings in 2D space
-- **Embedding Caching**: Dual caching system (file-based and Redis) for embeddings to reduce API calls and improve performance
-- **Security Features**: Built-in circuit breaker pattern to prevent system overload and rate limiting for diagram generation
-- **Asynchronous Processing**: Fully asynchronous document processing pipeline for improved performance
-- **Duplicate Document Detection**: Checksums to prevent duplicate document processing
-- **Adaptive Batching**: Dynamic batch size adjustments based on system performance
-- **Resource Monitoring**: Runtime memory and CPU monitoring to prevent system overload
-
-## Architecture Highlights
-
-- **Modular Structure**: Separation of concerns with distinct components for document processing, vector search, and user interface
-- **Resilient Design**: Error handling, retry mechanisms, and circuit breakers to ensure system stability
-- **Efficient Document Processing**:
-  - Concurrent document processing with thread and process pools
-  - Configurable chunking strategies for different document types
-  - Automatic checksum calculation to prevent duplicate processing
-  - Progress tracking and detailed statistics
-- **Advanced Vector Search**:
-  - PostgreSQL with pgvector extension for scalable similarity search
-  - Multi-level caching system (Redis and file-based) for embeddings
-  - Configurable search parameters (top-k, threshold, etc.)
-  - Rich result formatting and display
-
-## Dependencies
+### Prerequisites
 
 - Python 3.8+
-- PostgreSQL with pgvector extension
-- OpenAI API key
-- Mistral API key (optional, for OCR capabilities)
-- Redis (optional, for high-performance caching)
-- Various Python packages (see requirements.txt)
+- Docker & Docker Compose (Recommended)
+- `docker buildx` plugin enabled (usually included with recent Docker Desktop versions)
+- PostgreSQL with pgvector extension (provided by Docker setup)
+- OpenAI API Key
+- (Optional) Mistral API Key (for OCR)
+- (Optional) Redis (for caching, not configured by default)
+
+See [Dependencies](docs/dependencies.md) for full details.
+
+### Using Docker (Recommended)
+
+This setup uses `docker buildx bake` for efficient image building and `docker compose` for service orchestration.
+
+1.  **Configure Environment**: Create a file named `.env.docker` in the project root. Copy the contents from the example in [Environment Configuration](docs/environment_configuration.md) and populate it with your API keys and desired settings (e.g., database password).
+
+2.  **Build Application Image**: Use `docker buildx bake` to build the application image using `docker-bake.hcl`. This step ensures the image is loaded into the local Docker daemon.
+    ```bash
+    docker buildx bake
+    ```
+    *(Note: If this is the first time running `bake` or after changes, and compose later fails with image not found, ensure your buildx builder is configured correctly or try `docker buildx bake --load`)*
+
+3.  **Start Services**: Use `docker compose` to start the application (Chat UI by default), PostgreSQL, and pgAdmin. It reads configuration from `.env.docker`.
+    ```bash
+    docker compose --env-file .env.docker up -d
+    ```
+    *Troubleshooting Compose Warnings: If `docker compose up` warns about missing `OPENAI_API_KEY` or other variables despite them being in `.env.docker`, check if those variables are set (even if empty) in your shell environment (`echo $VAR_NAME`). Shell variables take precedence; `unset VAR_NAME` in your shell before running `compose` if needed.* 
+
+4.  **Access Services**:
+    *   **Chat Interface**: `http://localhost:7861`
+    *   **pgAdmin**: `http://localhost:8080` (Login with details from `.env.docker`)
+
+5.  **Process Your Documents**: Once the services are running, place your documents in the `documents/` directory and run the processing command:
+    ```bash
+    docker compose exec app python main.py process --dir documents
+    ```
+    *(Note: The first time you run this after resetting the database, it will automatically create the necessary database tables.)*
+
+6.  **Use the Chat**: Interact with your documents via the Chat Interface at `http://localhost:7861`.
+
+See the full [Docker Command Reference](docs/docker_commands.md) for other commands (API server, search, visualization, etc.).
+
+### Manual Setup
+
+*(Note: Docker is strongly recommended for managing dependencies like PostgreSQL)*
+
+1.  **Install Dependencies**: `pip install -r requirements.txt`
+2.  **Setup Database**: Manually set up PostgreSQL with the pgvector extension.
+3.  **Configure Environment**: Create a `.env` file. See [Environment Configuration](docs/environment_configuration.md). Ensure database connection details match your manual setup.
+4.  **Create Database Tables**: Manually run database schema creation logic (e.g., using Alembic if integrated, or a custom script calling `Base.metadata.create_all`).
+5.  **Available Commands**:
+    ```bash
+    # Process documents (replace 'documents' with your directory)
+    python main.py process --dir documents
+
+    # Start chat interface (Default: http://127.0.0.1:7860)
+    python main.py chat
+
+    # Run vector similarity search (interactive)
+    python main.py search
+
+    # Start the API server (Default: http://0.0.0.0:8000)
+    python main.py api
+    ```
+    For more command options, run `python main.py --help`.
+
+## Key Features
+
+- Document Processing (PDF, DOCX, TXT, etc.)
+- Vector Storage & Similarity Search (PostgreSQL/pgvector)
+- Interactive Chat Interface (Gradio)
+- FastAPI Backend & API Endpoints
+- Optional Enhanced Conversion (Docling) & OCR (Mistral)
+- Caching (File-based/Redis)
+- Duplicate Document Detection (Checksums)
+- Asynchronous Processing Pipeline
+- Vector Visualization
+- Conceptual Diagram Generation from Chat
+
+For a full list, see [Features](docs/features.md).
 
 ## Documentation
 
-For more information, see the documentation in the `docs/` directory:
-- `project_architecture.md`: Overview of the system architecture
-- `project_structure.md`: Details of the project structure and organization
-- `docling_integration.md`: Guide to using Docling for enhanced document conversion
-
-## Conceptual Diagrams
-
-The system includes a powerful feature to generate conceptual diagrams from your chat history:
-
-1. **Automatic Analysis**: The system analyzes your chat history to extract key concepts and relationships
-2. **Mermaid Diagram Generation**: Visualizes these concepts using Mermaid.js for clear, interactive diagrams
-3. **Integration in UI**: Access diagrams directly in the chat interface by clicking the "Generate Conceptual Diagram" button
-4. **Multiple Diagram Types**: Supports various diagram formats including flowcharts, mindmaps, and entity-relationship diagrams
-5. **Styled Visualization**: Diagrams use color coding and styling to differentiate between different types of concepts
-6. **Rate-Limited Generation**: Built-in rate limiting to prevent abuse and ensure system stability
-
-## Environment Configuration
-
-The system uses environment variables for configuration, which can be set in a `.env` file:
-
-### Core Configuration
-- `OPENAI_API_KEY`: Required for embedding generation and LLM responses
-- `MODEL`: LLM model to use (default: gpt-4o-mini)
-
-### Document Processing
-- `CHUNK_SIZE`: Size of document chunks (default: 1000)
-- `CHUNK_OVERLAP`: Overlap between chunks (default: 200)
-- `KNOWLEDGE_BASE_DIR`: Directory containing documents (default: documents)
-
-### Database Configuration
-- `POSTGRES_HOST`: Database hostname (default: localhost)
-- `POSTGRES_PORT`: Database port (default: 5432)
-- `POSTGRES_USER`: Database username (default: postgres)
-- `POSTGRES_PASSWORD`: Database password
-- `POSTGRES_DB`: Database name (default: ragSystem)
-
-### Caching Configuration
-- `USE_REDIS_CACHE`: Enable Redis caching (default: false, uses file-based caching)
-- `REDIS_HOST`: Redis server hostname (default: localhost)
-- `REDIS_PORT`: Redis server port (default: 6379)
-- `REDIS_DB`: Redis database number (default: 0)
-- `REDIS_PASSWORD`: Redis authentication password (if required)
-
-### Chat Interface Configuration
-- `SERVER_NAME`: Server hostname for chat interface (default: 127.0.0.1)
-- `TEMPERATURE`: Temperature for LLM responses (default: 0.7)
-- `MAX_TOKENS`: Maximum tokens in LLM responses (default: 1000)
-
-### Enhanced Document Processing
-- `USE_DOCLING`: Enable Docling document conversion (default: false)
-- `DOCLING_ARTIFACTS_PATH`: Path to pre-downloaded Docling models (optional)
-- `DOCLING_ENABLE_REMOTE`: Allow Docling to use remote services (default: false)
-- `DOCLING_USE_CACHE`: Use caching for Docling conversions (default: true)
-
-### OCR Configuration
-- `MISTRAL_API_KEY`: Required for OCR capabilities when using Mistral API
-- `USE_MISTRAL`: Enable Mistral OCR API (default: false)
-- `MISTRAL_OCR_MODEL`: Mistral OCR model to use (default: mistral-ocr-latest)
-- `MISTRAL_INCLUDE_IMAGES`: Include extracted images in OCR results (default: false)
-
-## Advanced Features
-
-### Performance Optimization
-- **Rate Limiting**: Configurable rate limiting for API calls to prevent quota exhaustion
-- **Exponential Backoff**: Automatic retry with increasing delays for API failures
-- **Connection Pooling**: Database connection pooling for efficient resource utilization
-- **Adaptive Batching**: Dynamic batch size adjustments based on processing times
-
-### Security Features
-- **Circuit Breaker Pattern**: Prevents cascading failures by temporarily disabling failing components
-- **Input Validation**: Thorough validation of all user inputs to prevent security issues
-- **Rate Limiting**: Protection against abuse with configurable rate limits
-- **Error Isolation**: Contained error handling to prevent system-wide failures
-
-### Document Processing
-- **Multi-Format Support**: Processing for PDF, DOCX, TXT, MD, CSV, JSON, HTML, XML, and more
-- **Structured Extraction**: Preservation of document structure with specialized loaders
-- **Duplicate Detection**: SHA-256 checksums to prevent duplicate document processing
-- **Progress Tracking**: Detailed statistics and progress monitoring during processing
+- **Architecture & Flow Diagrams:**
+    - [High-Level Architecture Overview](docs/architecture_overview.md)
+    - [Docker Deployment View](docs/docker_deployment.md)
+    - [Chat Interaction Flow](docs/chat_flow.md)
+    - [Document Processing Flow](docs/document_processing_flow.md)
+- **Core Documentation:**
+    - [Project Structure](docs/project_structure.md)
+    - [Docker Command Reference](docs/docker_commands.md)
+    - [API Reference](docs/api_reference.md)
+    - [Features](docs/features.md)
+    - [Conceptual Diagrams Feature](docs/conceptual_diagrams.md)
+    - [Environment Configuration](docs/environment_configuration.md)
+    - [Dependencies](docs/dependencies.md)
+    - [Advanced Features](docs/advanced_features.md)
+- **Integrations:**
+    - [Docling Integration](docs/docling_integration.md) (If available)

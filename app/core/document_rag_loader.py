@@ -423,7 +423,7 @@ async def get_embeddings_with_backoff(
         except Exception as e:
             if attempt == max_retries - 1:
                 logger.error(f"Failed to get embeddings after {max_retries} attempts: {str(e)}")
-                raise EmbeddingError(f"Embedding generation failed after {max_retries} attempts") from e
+                raise
             delay = base_delay * (2 ** attempt)
             logger.warning(f"Embedding attempt {attempt + 1} failed, retrying in {delay}s")
             await asyncio.sleep(delay)
@@ -1699,217 +1699,59 @@ def process_single_document(file_path: str, config: ProcessorConfig) -> Optional
 
 # Update the async_main function to handle command line arguments
 async def async_main(directory: str = None, reset_db: bool = False, use_docling: bool = False, use_mistral: bool = False):
-    """Main async function to run the document processor.
+    """Main asynchronous function for document processing."""
+    # Update processor config based on arguments
+    processor_config.use_docling = use_docling
+    processor_config.use_mistral = use_mistral
     
-    Args:
-        directory: Directory containing documents to process. If provided, will process all documents in this directory
-        reset_db: If True, reset the database before processing
-        use_docling: If True, use Docling for enhanced document conversion
-    """
+    # Use default directory from config if not provided
+    if directory is None:
+        directory = processor_config.documents_dir
+
+    logger.info(f"Starting document processing for directory: {directory}")
+    logger.info(f"Database connection string: {db_config.connection_string}")
+    logger.info(f"Docling enabled: {use_docling}")
+    logger.info(f"Mistral OCR enabled: {use_mistral}")
 
     try:
-        # Create a rich console for better formatting
-        console = Console()
+        # Initialize the database engine
+        engine = create_async_engine(db_config.connection_string)
         
-        # Display welcome banner
-        console.print("\n[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
-        console.print("[bold green]                 DOCUMENT PROCESSING SYSTEM[/bold green]")
-        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
-        console.print("\n[yellow]This tool processes documents and creates searchable vector embeddings.[/yellow]")
-        console.print("[yellow]Documents are chunked, embedded, and stored in a vector database.[/yellow]\n")
-        
-        # Display system information
-        console.print("[bold]System Configuration:[/bold]")
-        console.print(f"  • [cyan]Vector Store:[/cyan] {processor_config.vector_store_type}")
-        console.print(f"  • [cyan]Embedding Model:[/cyan] {embedding_config.model_name}")
-        # Determine document loader type for display
-        loader_type = 'Default (LangChain)'
-        if use_docling:
-            loader_type = 'Docling (Enhanced)'
-        elif use_mistral:
-            loader_type = 'Mistral OCR API'
-        console.print(f"  • [cyan]Document Loader:[/cyan] {loader_type}")
-        console.print(f"  • [cyan]Chunk Size:[/cyan] {chunking_config.chunk_size}")
-        console.print(f"  • [cyan]Chunk Overlap:[/cyan] {chunking_config.chunk_overlap}")
-        console.print(f"  • [cyan]Workers:[/cyan] {processor_config.max_workers}")
-        console.print(f"  • [cyan]Default Documents Dir:[/cyan] {os.getenv('KNOWLEDGE_BASE_DIR', 'documents')}")
-        
-        # Load configuration
-        console.print("\n[bold]Initializing document processor...[/bold]")
-        
-        # Create PostgreSQL configuration
-        postgres_config = PostgresConfig(
-            connection_string=f"postgresql+asyncpg://{db_config.user}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}",
-            pre_delete_collection=False,
-            drop_existing=False
-        )
-        
-        # Create processor configuration
-        config = ProcessorConfig(
-            chunk_size=chunking_config.chunk_size,
-            chunk_overlap=chunking_config.chunk_overlap,
-            vector_store_type="postgres",
-            postgres_config=postgres_config,
-            batch_size=50,
-            max_workers=processor_config.max_workers,
-            openai_api_key=openai_api_key,
-            # Docling configuration
-            use_docling=use_docling,
-            docling_artifacts_path=os.getenv('DOCLING_ARTIFACTS_PATH'),
-            docling_enable_remote=os.getenv('DOCLING_ENABLE_REMOTE', '').lower() in ('true', '1', 'yes'),
-            docling_use_cache=os.getenv('DOCLING_USE_CACHE', 'true').lower() in ('true', '1', 'yes'),
-            # Mistral OCR configuration
-            use_mistral=use_mistral,
-            mistral_api_key=os.getenv('MISTRAL_API_KEY'),
-            mistral_ocr_model=os.getenv('MISTRAL_OCR_MODEL', 'mistral-ocr-latest'),
-            mistral_include_images=os.getenv('MISTRAL_INCLUDE_IMAGES', '').lower() in ('true', '1', 'yes')
-        )
-        
-        # Create processor
-        processor = DocumentProcessor(config)
-        console.print("[bold green]✓[/bold green] Processor initialized successfully\n")
-        
-        # Handle database reset if requested
+        # Ensure database tables are created
+        async with engine.begin() as conn:
+            logger.info("Creating database tables if they do not exist...")
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database tables checked/created successfully.")
+            
+        # Optionally reset the database
         if reset_db:
-            console.print("[bold yellow]Resetting database...[/bold yellow]")
-            await reset_database(processor.engine)
-            console.print("[bold green]✓[/bold green] Database reset successfully\n")
-            
-            # Still need to initialize the database after reset
-            console.print("[bold]Initializing fresh database...[/bold]")
-            await processor.initialize_database(drop_all=False)  # Tables are already dropped by reset_database
-            console.print("[bold green]✓[/bold green] Fresh database initialized successfully\n")
-        else:
-            # Initialize database normally
-            console.print("[bold]Setting up database...[/bold]")
-            await processor.initialize_database()
-            console.print("[bold green]✓[/bold green] Database initialized successfully\n")
+            logger.warning("Resetting the database...")
+            await reset_database(engine)
+            logger.info("Database reset complete.")
+            # Recreate tables after reset
+            async with engine.begin() as conn:
+                logger.info("Recreating database tables after reset...")
+                await conn.run_sync(Base.metadata.create_all)
+                logger.info("Database tables recreated successfully.")
+                
+        # Initialize the DocumentProcessor
+        processor = DocumentProcessor(processor_config)
         
-        # If directory is provided, process it directly
-        if directory:
-            # Ensure the directory exists
-            if not os.path.exists(directory):
-                console.print(f"[bold red]Error:[/bold red] Directory {directory} does not exist")
-                return
-                
-            if not os.path.isdir(directory):
-                console.print(f"[bold red]Error:[/bold red] {directory} exists but is not a directory")
-                return
-                
-            console.print(f"\n[bold]Processing all documents in directory: {directory}...[/bold]")
-            with console.status("[bold green]Processing documents...[/bold green]"):
-                chunks = await processor.process_directory(directory)
-            
-            console.print(f"[bold green]✓[/bold green] Processing complete")
-            if isinstance(chunks, list):
-                console.print(f"[bold green]✓[/bold green] Created {len(chunks)} chunks")
-            elif isinstance(chunks, dict):
-                console.print(f"[bold green]✓[/bold green] Processed {chunks.get('processed', 0)} files")
-                console.print(f"[bold green]✓[/bold green] Created {chunks.get('chunks', 0)} chunks")
-                if chunks.get('skipped', 0):
-                    console.print(f"[bold yellow]![/bold yellow] Skipped {chunks.get('skipped', 0)} files")
-                if chunks.get('errors', 0):
-                    console.print(f"[bold red]![/bold red] Encountered {chunks.get('errors', 0)} errors")
-            else:
-                console.print(f"[bold green]✓[/bold green] Processing completed successfully")
-            return
+        # Process the directory
+        logger.info(f"Processing directory: {directory}")
+        await processor.process_directory(directory)
         
-        # Interactive mode if no directory is provided
-        console.print("[bold]Document Processing Options:[/bold]")
-        console.print("  1. [green]Process a single document[/green]")
-        console.print("  2. [green]Process all documents in the default directory(documents)[/green]")
-        console.print("  3. [green]Process all documents in a custom directory[/green]")
-        console.print("  4. [green]Exit[/green]\n")
-        
-        choice = input("Enter your choice (1-4): ")
-        
-        if choice == "1":
-            file_path = input("\nEnter the path to the document: ")
-            if not os.path.exists(file_path):
-                console.print(f"[bold red]Error:[/bold red] File {file_path} does not exist")
-                return
-                
-            console.print(f"\n[bold]Processing {file_path}...[/bold]")
-            with console.status("[bold green]Processing document...[/bold green]"):
-                chunks = await processor.process_file(file_path)
-            
-            if chunks:
-                console.print(f"[bold green]✓[/bold green] Successfully processed {file_path}")
-                console.print(f"[bold green]✓[/bold green] Created {len(chunks)} chunks")
-            else:
-                console.print(f"[bold yellow]![/bold yellow] No chunks created for {file_path}")
-                
-        elif choice == "2":
-            # Use default directory from .env
-            default_dir = os.getenv('KNOWLEDGE_BASE_DIR', 'documents')
-            
-            # Ensure the directory exists
-            if not os.path.exists(default_dir):
-                os.makedirs(default_dir)
-                console.print(f"[bold yellow]Created default directory: {default_dir}[/bold yellow]")
-                console.print("[bold yellow]Please add documents to this directory and run again.[/bold yellow]")
-                return
-                
-            if not os.path.isdir(default_dir):
-                console.print(f"[bold red]Error:[/bold red] {default_dir} exists but is not a directory")
-                return
-                
-            console.print(f"\n[bold]Processing all documents in default directory: {default_dir}...[/bold]")
-            with console.status("[bold green]Processing documents...[/bold green]"):
-                chunks = await processor.process_directory(default_dir)
-            
-            console.print(f"[bold green]✓[/bold green] Processing complete")
-            if isinstance(chunks, list):
-                console.print(f"[bold green]✓[/bold green] Created {len(chunks)} chunks")
-            elif isinstance(chunks, dict):
-                console.print(f"[bold green]✓[/bold green] Processed {chunks.get('processed', 0)} files")
-                console.print(f"[bold green]✓[/bold green] Created {chunks.get('chunks', 0)} chunks")
-                if chunks.get('skipped', 0):
-                    console.print(f"[bold yellow]![/bold yellow] Skipped {chunks.get('skipped', 0)} files")
-                if chunks.get('errors', 0):
-                    console.print(f"[bold red]![/bold red] Encountered {chunks.get('errors', 0)} errors")
-            else:
-                console.print(f"[bold green]✓[/bold green] Processing completed successfully")
-                
-        elif choice == "3":
-            dir_path = input("\nEnter the directory path: ")
-            if not os.path.isdir(dir_path):
-                console.print(f"[bold red]Error:[/bold red] Directory {dir_path} does not exist")
-                return
-                
-            console.print(f"\n[bold]Processing all documents in {dir_path}...[/bold]")
-            with console.status("[bold green]Processing documents...[/bold green]"):
-                chunks = await processor.process_directory(dir_path)
-            
-            console.print(f"[bold green]✓[/bold green] Processing complete")
-            if isinstance(chunks, list):
-                console.print(f"[bold green]✓[/bold green] Created {len(chunks)} chunks")
-            elif isinstance(chunks, dict):
-                console.print(f"[bold green]✓[/bold green] Processed {chunks.get('processed', 0)} files")
-                console.print(f"[bold green]✓[/bold green] Created {chunks.get('chunks', 0)} chunks")
-                if chunks.get('skipped', 0):
-                    console.print(f"[bold yellow]![/bold yellow] Skipped {chunks.get('skipped', 0)} files")
-                if chunks.get('errors', 0):
-                    console.print(f"[bold red]![/bold red] Encountered {chunks.get('errors', 0)} errors")
-            else:
-                console.print(f"[bold green]✓[/bold green] Processing completed successfully")
-                
-        elif choice == "4":
-            console.print("\n[green]Exiting program. Thank you for using the Document Processing System![/green]")
-            return
-        else:
-            console.print("\n[bold red]Invalid choice. Please run the program again and select 1-4.[/bold red]")
-            
-        console.print("\n[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
-        console.print("[green]Processing complete! Your documents are now ready for vector similarity search.[/green]")
-        console.print("[yellow]Use vector_similarity_search.py to search your processed documents.[/yellow]")
-        console.print("[bold cyan]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold cyan]")
+        logger.info("Document processing finished successfully.")
         
     except Exception as e:
-        logger.error(f"Error in async_main: {str(e)}", exc_info=True)
+        logger.error(f"Error during document processing: {e}", exc_info=True)
+        # Optionally, re-raise the exception if needed
+        # raise e
     finally:
-        if 'processor' in locals() and hasattr(processor, 'engine'):
-            await processor.engine.dispose()
+        # Clean up resources if necessary
+        if 'engine' in locals():
+            await engine.dispose()
+        logger.info("Database engine disposed.")
 
 if __name__ == "__main__":
     # Parse command line arguments

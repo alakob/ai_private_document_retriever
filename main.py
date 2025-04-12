@@ -8,10 +8,51 @@ with options to run either the document processor or the chat interface.
 
 import os
 import argparse
+from fastapi import FastAPI
+import uvicorn
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Create a FastAPI app for health checks and API endpoints
+app = FastAPI(
+    title="AI Private Document Retriever",
+    description="API for document storage, retrieval, and question answering using AI",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
+
+# CORS middleware for frontend access
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+async def root():
+    """Root endpoint to provide basic information or redirect to docs."""
+    return {
+        "app": "AI Private Document Retriever",
+        "version": "1.0.0",
+        "documentation": "/docs",
+        "health_check": "/health"
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker container monitoring."""
+    return {"status": "healthy"}
+
+# Include all API routers
+from app.routers import api_router
+app.include_router(api_router, prefix="/api/v1")
 
 def main():
     """Parse command line arguments and run the appropriate component."""
@@ -101,8 +142,8 @@ def main():
     viz_parser.add_argument(
         "--output", 
         type=str,
-        default="vector_visualization.html",
-        help="Output HTML file for visualization"
+        default="visualizations/vector_visualization.html",
+        help="Output HTML file for visualization (saved to visualizations directory)"
     )
     viz_parser.add_argument(
         "--perplexity", 
@@ -111,8 +152,26 @@ def main():
         help="TSNE perplexity parameter"
     )
     
+    # API server command
+    api_parser = subparsers.add_parser(
+        "api", help="Start the API server with health check endpoint"
+    )
+    api_parser.add_argument(
+        "--host", 
+        type=str,
+        default="0.0.0.0",
+        help="Host to bind the server to"
+    )
+    api_parser.add_argument(
+        "--port", 
+        type=int,
+        default=8000,
+        help="Port to bind the server to"
+    )
+    
     args = parser.parse_args()
     
+    # Process the command
     if args.command == "process":
         from app.core.document_rag_loader import async_main
         import asyncio
@@ -135,6 +194,9 @@ def main():
         # Run the async chat interface
         import asyncio
         asyncio.run(chat_main())
+    elif args.command == "api":
+        # Start the FastAPI server
+        uvicorn.run(app, host=args.host, port=args.port)
     elif args.command == "search":
         from app.services.vector_similarity_search import main as search_main
         import asyncio
@@ -205,12 +267,11 @@ def main():
             except Exception as e:
                 print(f"❌ Error generating visualization: {str(e)}")
                 raise
-        
-        # Run the visualization function
-        asyncio.run(generate_visualization(
-            output_file=args.output,
-            perplexity=args.perplexity
-        ))
+            finally:
+                await engine.dispose()
+                
+        # Run the visualization function with args
+        asyncio.run(generate_visualization(output_file=args.output, perplexity=args.perplexity))
     else:
         parser.print_help()
 
