@@ -1,6 +1,10 @@
 # DocuSeek AI
 
-A system for private document retrieval using vector similarity search and Large Language Models.
+**DocuSeek AI: Unlock Insights from Your Private Documents**
+
+Securely chat with your private documents using an intelligent RAG system. DocuSeek AI leverages powerful LLMs and vector search to provide accurate, context-aware answers based *only* on your uploaded content, ensuring privacy and relevance. Process various formats, visualize data relationships, and gain deeper understanding effortlessly.
+
+![DocuSeek AI Interface](docuseek1.png)
 
 ## Project Overview
 
